@@ -1,0 +1,182 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN // Acceso total al sistema, gestión de usuarios/roles, configuración global, modificar tipos de activos y comisiones
+  ADMIN // Gestión de clientes, aprobación de transacciones, acceso a reportes, gestión de operaciones
+  OPERATOR // Crear/gestionar transacciones, ver saldos, gestionar operaciones en curso, cargar comprobantes
+  ACCOUNTANT // Ver movimientos, generar reportes, conciliar operaciones, ver estadísticas
+  LOGISTICS_MANAGER // Gestión de entregas/logística, costos de logística, programación de entregas
+  VIEWER // Solo lectura de operaciones y saldos generales, sin permisos de modificación
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  email     String   @unique
+  password  String
+  isActive  Boolean  @default(true)
+  role      UserRole @default(OPERATOR)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  transactions    Transaction[]
+  details         TransactionDetail[] @relation("DetailCreatedBy")
+  reconciliations Reconciliation[]    @relation("ReconciliationCreatedBy")
+  auditLogs       AuditLog[]
+}
+
+model Client {
+  id            String          @id @default(uuid())
+  name          String
+  email         String          @unique
+  phone         String
+  address       String
+  country       String
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  Transaction   Transaction[]
+  ClientBalance ClientBalance[]
+}
+
+enum AssetType {
+  PHYSICAL
+  DIGITAL
+}
+
+model Asset {
+  id                String              @id @default(uuid())
+  name              String
+  description       String
+  type              AssetType
+  isPercentage      Boolean             @default(false)
+  isMtherAccount    Boolean             @default(false) // (Opcional) Indica si el activo es "cuenta madre" y, por tanto, maneja comisión por transacción.
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  TransactionDetail TransactionDetail[]
+  ClientBalance     ClientBalance[]
+}
+
+enum TransactionState {
+  PENDING // Pendiente
+  CURRENT_ACCOUNT
+  COMPLETED
+}
+
+enum MovementType {
+  INCOME // Ingreso
+  EXPENSE // Gasto
+}
+
+enum PaymentResponsibility {
+  CLIENT // Cliente
+  SHARED // Compartido
+  SYSTEM // Sistema
+}
+
+model Transaction {
+  id                    String              @id @default(uuid())
+  clientId              String
+  client                Client              @relation(fields: [clientId], references: [id])
+  date                  DateTime            @default(now())
+  state                 TransactionState    @default(PENDING)
+  notes                 String?
+  createdBy             String
+  createdByUser         User                @relation(fields: [createdBy], references: [id])
+  parentTransactionId   String?
+  parentTransaction     Transaction?        @relation("ParentTransaction", fields: [parentTransactionId], references: [id])
+  childTransactions     Transaction[]       @relation("ParentTransaction")
+  details               TransactionDetail[]
+  logistics             Logistics?
+  sourceReconciliations Reconciliation[]    @relation("SourceTransaction")
+  targetReconciliations Reconciliation[]    @relation("TargetTransaction")
+  clientBalances        ClientBalance[]
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+}
+
+model TransactionDetail {
+  id                   String       @id @default(uuid())
+  transactionId        String
+  transaction          Transaction  @relation(fields: [transactionId], references: [id])
+  assetId              String
+  asset                Asset        @relation(fields: [assetId], references: [id])
+  movementType         MovementType
+  amount               Float
+  percentageDifference Float?
+  notes                String?
+  createdBy            String
+  createdByUser        User         @relation("DetailCreatedBy", fields: [createdBy], references: [id])
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+}
+
+model Logistics {
+  id                    String                @id @default(uuid())
+  transactionId         String                @unique
+  transaction           Transaction           @relation(fields: [transactionId], references: [id])
+  destinationAddress    String
+  deliveryDate          DateTime?
+  note                  String?
+  paymentResponsibility PaymentResponsibility @default(CLIENT)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+}
+
+model Reconciliation {
+  id                  String      @id @default(uuid())
+  sourceTransactionId String
+  sourceTransaction   Transaction @relation("SourceTransaction", fields: [sourceTransactionId], references: [id])
+  targetTransactionId String
+  targetTransaction   Transaction @relation("TargetTransaction", fields: [targetTransactionId], references: [id])
+  amount              Float
+  notes               String?
+  reconciliationDate  DateTime    @default(now())
+  createdBy           String
+  createdByUser       User        @relation("ReconciliationCreatedBy", fields: [createdBy], references: [id])
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+model ClientBalance {
+  id            String       @id @default(uuid())
+  clientId      String
+  client        Client       @relation(fields: [clientId], references: [id])
+  assetId       String
+  asset         Asset        @relation(fields: [assetId], references: [id])
+  transactionId String?
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  balance       Float
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([clientId, assetId])
+  @@index([clientId])
+  @@index([assetId])
+  @@index([transactionId])
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  entityType    String
+  entityId      String
+  action        String
+  changedData   Json
+  changedBy     String
+  changedByUser User     @relation(fields: [changedBy], references: [id])
+  changedAt     DateTime @default(now())
+}
