@@ -11,6 +11,7 @@ import {
   HttpStatus,
   Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -22,17 +23,23 @@ import { UpdatePasswordDto } from './dto/update-password.dto';
 import { Role } from 'src/common/decorators/role.decorator';
 import { UserRole } from '@prisma/client';
 import { AuthGuard } from 'src/common/guard/guard.guard';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
+import { RequestWithUser } from 'src/common/interfaces/request-with-user.interface';
 
 @ApiBearerAuth('JWT-auth')
 @ApiTags('Users')
-@Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
 @UseGuards(AuthGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   async create(@Body() createUserDto: CreateUserDto) {
@@ -40,7 +47,34 @@ export class UsersController {
     return user;
   }
 
+  @Get('me')
+  @Role(
+    UserRole.SUPER_ADMIN,
+    UserRole.ADMIN,
+    UserRole.OPERATOR,
+    UserRole.VIEWER,
+    UserRole.ACCOUNTANT,
+  )
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
+  @ApiOperation({
+    summary: 'Obtener perfil del usuario actual',
+    description: 'Obtiene la información del usuario autenticado actualmente',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Perfil del usuario recuperado exitosamente',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'No autorizado',
+  })
+  getProfile(@Req() req: RequestWithUser) {
+    return this.usersService.findOne(req.user.sub);
+  }
+
   @Get()
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   findAll(@Query() paginationDto: PaginationDto) {
@@ -48,6 +82,7 @@ export class UsersController {
   }
 
   @Get(':id')
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   findOne(@Param('id') id: string) {
@@ -55,6 +90,7 @@ export class UsersController {
   }
 
   @Patch(':id')
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
@@ -62,6 +98,7 @@ export class UsersController {
   }
 
   @Patch(':id/password')
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   async updatePassword(
@@ -72,6 +109,7 @@ export class UsersController {
   }
 
   @Patch(':id/disable')
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   disable(@Param('id') id: string) {
@@ -79,6 +117,7 @@ export class UsersController {
   }
 
   @Patch(':id/enable')
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   enable(@Param('id') id: string) {
@@ -86,6 +125,7 @@ export class UsersController {
   }
 
   @Delete(':id')
+  @Role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(ExcludePasswordInterceptor, TransformResponseInterceptor)
   remove(@Param('id') id: string) {
