@@ -1,4 +1,4 @@
-import { hash, compare } from 'bcrypt';
+import { hash, compare } from 'bcryptjs';
 
 export class PasswordEncrypter {
   private static readonly SALT_ROUNDS = 10;
