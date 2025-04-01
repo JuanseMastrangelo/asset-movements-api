@@ -30,6 +30,7 @@ export class AssetsController {
 
   @Get()
   findAll(@Query() paginationDto: PaginationDto) {
+    // Para obtener todos los assets, usar limit=-1
     const assets = this.assetsService.findAll(paginationDto);
 
     return assets;

@@ -5,6 +5,8 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Min,
+  ValidateIf,
 } from 'class-validator';
 
 export class PaginationDto {
@@ -16,6 +18,7 @@ export class PaginationDto {
 
   @IsOptional()
   @IsNumber()
+  @ValidateIf((o) => o.limit !== -1)
   @IsPositive()
   @Type(() => Number)
   limit?: number;

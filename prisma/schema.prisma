@@ -70,6 +70,8 @@ model Asset {
   updatedAt         DateTime            @updatedAt
   TransactionDetail TransactionDetail[]
   ClientBalance     ClientBalance[]
+  sourceRules       TransactionRule[]   @relation("SourceAssetRules")
+  targetRules       TransactionRule[]   @relation("TargetAssetRules")
 }
 
 enum TransactionState {
@@ -130,12 +132,29 @@ model Logistics {
   id                    String                @id @default(uuid())
   transactionId         String                @unique
   transaction           Transaction           @relation(fields: [transactionId], references: [id])
+  originAddress         String                @default("") // Dirección de origen
   destinationAddress    String
+  distance              Float? // Distancia en kilómetros
+  price                 Float? // Precio calculado
+  pricePerKm            Float? // Precio por kilómetro aplicado
   deliveryDate          DateTime?
   note                  String?
   paymentResponsibility PaymentResponsibility @default(CLIENT)
+  status                String?               @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, CANCELED
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
+}
+
+model LogisticsSettings {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  basePrice   Float    @default(0) // Precio base para cualquier entrega
+  pricePerKm  Float    @default(0) // Precio por kilómetro
+  minDistance Float? // Distancia mínima para aplicar precio (opcional)
+  maxDistance Float? // Distancia máxima para aplicar precio (opcional)
+  isActive    Boolean  @default(true) // Si está activa esta configuración
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Reconciliation {
@@ -179,4 +198,19 @@ model AuditLog {
   changedBy     String
   changedByUser User     @relation(fields: [changedBy], references: [id])
   changedAt     DateTime @default(now())
+}
+
+model TransactionRule {
+  id            String   @id @default(uuid())
+  sourceAssetId String
+  sourceAsset   Asset    @relation("SourceAssetRules", fields: [sourceAssetId], references: [id])
+  targetAssetId String
+  targetAsset   Asset    @relation("TargetAssetRules", fields: [targetAssetId], references: [id])
+  isEnabled     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([sourceAssetId, targetAssetId])
+  @@index([sourceAssetId])
+  @@index([targetAssetId])
 }

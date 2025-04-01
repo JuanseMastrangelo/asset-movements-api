@@ -25,10 +25,14 @@ export class AssetsService {
       sort = 'createdAt',
     } = paginationDto;
 
+    // Si limit es -1, devuelve todos los items
+    const take = limit === -1 ? undefined : limit;
+    const skip = limit === -1 ? undefined : (page - 1) * limit;
+
     const [assets, total] = await Promise.all([
       this.prisma.asset.findMany({
-        skip: (page - 1) * limit,
-        take: limit,
+        skip: skip,
+        take: take,
         orderBy: {
           [sort]: order,
         },
@@ -40,11 +44,11 @@ export class AssetsService {
       items: assets,
       pagination: {
         total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        hasPreviousPage: page > 1,
-        hasNextPage: page * limit < total,
+        page: limit === -1 ? 1 : page,
+        limit: limit === -1 ? total : limit,
+        totalPages: limit === -1 ? 1 : Math.ceil(total / limit),
+        hasPreviousPage: limit === -1 ? false : page > 1,
+        hasNextPage: limit === -1 ? false : page * limit < total,
       },
     };
   }
