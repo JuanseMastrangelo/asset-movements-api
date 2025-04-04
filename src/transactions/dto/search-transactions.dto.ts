@@ -95,7 +95,6 @@ export class SearchTransactionsDto {
     description: 'Incluir transacciones canceladas en los resultados',
     required: false,
     default: false,
-    example: false,
   })
   @IsOptional()
   @IsBoolean()

@@ -14,6 +14,7 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
   UseInterceptors,
+  HttpException,
 } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
@@ -330,6 +331,14 @@ export class TransactionsController {
     description: 'Transacción no encontrada',
   })
   cancel(@Param('id') id: string, @Req() req: RequestWithUser) {
-    return this.transactionsService.cancel(id, req.user.sub);
+    try {
+      return this.transactionsService.cancel(id, req.user.sub);
+    } catch (error) {
+      console.error('Error en cancel:', error);
+      throw new HttpException(
+        'Error al cancelar la transacción: ' + error.message,
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }
