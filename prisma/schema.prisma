@@ -72,12 +72,14 @@ model Asset {
   ClientBalance     ClientBalance[]
   sourceRules       TransactionRule[]   @relation("SourceAssetRules")
   targetRules       TransactionRule[]   @relation("TargetAssetRules")
+  denominations     Denomination[]
 }
 
 enum TransactionState {
   PENDING // Pendiente
   CURRENT_ACCOUNT
   COMPLETED
+  CANCELLED // Eliminado -> La transacción debe estar en estado PENDING
 }
 
 enum MovementType {
@@ -97,7 +99,7 @@ model Transaction {
   client                Client              @relation(fields: [clientId], references: [id])
   date                  DateTime            @default(now())
   state                 TransactionState    @default(PENDING)
-  notes                 String?
+  notes                 String? // Notas de la transacción y crear un campo para crear un comentario de cancelación
   createdBy             String
   createdByUser         User                @relation(fields: [createdBy], references: [id])
   parentTransactionId   String?
@@ -126,6 +128,7 @@ model TransactionDetail {
   createdByUser        User         @relation("DetailCreatedBy", fields: [createdBy], references: [id])
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
+  billDetails          BillDetail[]
 }
 
 model Logistics {
@@ -213,4 +216,33 @@ model TransactionRule {
   @@unique([sourceAssetId, targetAssetId])
   @@index([sourceAssetId])
   @@index([targetAssetId])
+}
+
+model Denomination {
+  id          String       @id @default(uuid())
+  assetId     String
+  asset       Asset        @relation(fields: [assetId], references: [id])
+  value       Float // Valor de la denominación (ej. 50, 20, 10, 5, 1, etc.)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  billDetails BillDetail[]
+
+  @@unique([assetId, value])
+  @@index([assetId])
+}
+
+model BillDetail {
+  id                  String            @id @default(uuid())
+  transactionDetailId String
+  transactionDetail   TransactionDetail @relation(fields: [transactionDetailId], references: [id], onDelete: Cascade)
+  denominationId      String
+  denomination        Denomination      @relation(fields: [denominationId], references: [id])
+  quantity            Int // Cantidad de billetes de esta denominación
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@unique([transactionDetailId, denominationId])
+  @@index([transactionDetailId])
+  @@index([denominationId])
 }

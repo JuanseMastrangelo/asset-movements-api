@@ -18,6 +18,19 @@ export class AssetsService {
   }
 
   async findAll(paginationDto: PaginationDto) {
+    // Si no se proporcionan parámetros de paginación explícitamente,
+    // devolver todos los assets sin estructura de paginación
+    if (!paginationDto.page) {
+      const assets = await this.prisma.asset.findMany({
+        where: { isActive: true },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+      return assets;
+    }
+
+    // Proceso normal de paginación cuando se envían parámetros
     const {
       page = 1,
       limit = 10,

@@ -6,6 +6,7 @@ import {
   IsEnum,
   IsNumber,
   Min,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TransactionState } from '@prisma/client';
@@ -89,4 +90,15 @@ export class SearchTransactionsDto {
   @Type(() => Number)
   @Min(0)
   offset?: number;
+
+  @ApiProperty({
+    description: 'Incluir transacciones canceladas en los resultados',
+    required: false,
+    default: false,
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  includeCancelled?: boolean;
 }

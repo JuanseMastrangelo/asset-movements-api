@@ -398,4 +398,86 @@ export class DashboardService {
       balances,
     };
   }
+
+  /**
+   * Obtiene el balance de un cliente específico para todos sus activos
+   * @param clientId ID del cliente a consultar
+   * @returns Datos del cliente con sus balances por activo
+   */
+  async getClientBalance(clientId: string) {
+    // 1. Verificar que el cliente existe
+    const client = await this.prisma.client.findUnique({
+      where: {
+        id: clientId,
+        isActive: true,
+      },
+    });
+
+    if (!client) {
+      throw new NotFoundException(
+        `Cliente con ID ${clientId} no encontrado o inactivo`,
+      );
+    }
+
+    // 2. Obtener los balances del cliente
+    const clientBalances = await this.prisma.clientBalance.findMany({
+      where: {
+        clientId: clientId,
+      },
+      include: {
+        asset: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            type: true,
+          },
+        },
+      },
+      orderBy: {
+        asset: {
+          type: 'asc',
+        },
+      },
+    });
+
+    // 3. Obtener todos los activos para incluir también los que tienen balance 0
+    const allAssets = await this.prisma.asset.findMany({
+      where: {
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        type: true,
+      },
+      orderBy: {
+        type: 'asc',
+      },
+    });
+
+    // 4. Crear un array con todos los activos y sus balances (incluyendo los que tienen 0)
+    const balances = allAssets.map((asset) => {
+      const existingBalance = clientBalances.find(
+        (balance) => balance.assetId === asset.id,
+      );
+
+      return {
+        asset: asset,
+        balance: existingBalance?.balance || 0,
+      };
+    });
+
+    // 5. Formatear la respuesta
+    return {
+      client: {
+        id: client.id,
+        name: client.name,
+        email: client.email,
+        phone: client.phone,
+      },
+      balances: balances,
+    };
+  }
 }

@@ -1,14 +1,15 @@
 #!/bin/bash
-echo "🔄 Reseteando la base de datos..."
-npx prisma migrate reset --force
 
-echo "🚀 Ejecutando script de inicialización..."
+echo "🔄 Limpiando la base de datos..."
+
+# Eliminar la base de datos
+npx prisma db push --force-reset
+
+# Generar el cliente de Prisma
+npx prisma generate
+
+# Ejecutar el script de inicialización
+echo "📦 Inicializando datos básicos..."
 npx ts-node scripts/initialize-db.ts
 
-echo "🏦 Creando todos los tipos de activos..."
-npx ts-node scripts/create-all-assets.ts
-
-echo "🧩 Generando datos de prueba..."
-npx ts-node scripts/generate-test-data.ts
-
-echo "✅ Proceso completo. Ahora puedes usar la aplicación." 
+echo "✅ Proceso completado" 

@@ -1,4 +1,11 @@
-import { Controller, Get, UseGuards, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  UseGuards,
+  UseInterceptors,
+  Param,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { AuthGuard } from '../common/guard/guard.guard';
 import { Role } from '../common/decorators/role.decorator';
@@ -8,8 +15,9 @@ import {
   ApiOperation,
   ApiResponse,
   ApiTags,
+  ApiParam,
 } from '@nestjs/swagger';
-import { TransformResponseInterceptor } from 'src/common/interceptor/transform.response.interceptor';
+import { TransformResponseInterceptor } from '../common/interceptor/transform.response.interceptor';
 
 @ApiTags('Dashboard')
 @ApiBearerAuth('JWT-auth')
@@ -97,5 +105,27 @@ export class DashboardController {
   })
   async getSystemBalance() {
     return await this.dashboardService.getSystemBalance();
+  }
+
+  @Get('client-balance/:clientId')
+  @Role(
+    UserRole.OPERATOR,
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.ACCOUNTANT,
+    UserRole.VIEWER,
+  )
+  @ApiOperation({ summary: 'Obtener el balance de un cliente específico' })
+  @ApiParam({ name: 'clientId', description: 'ID del cliente', type: 'string' })
+  @ApiResponse({
+    status: 200,
+    description: 'Balance del cliente agrupado por activo',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Cliente no encontrado',
+  })
+  async getClientBalance(@Param('clientId', ParseUUIDPipe) clientId: string) {
+    return await this.dashboardService.getClientBalance(clientId);
   }
 }

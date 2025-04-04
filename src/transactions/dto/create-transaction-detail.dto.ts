@@ -6,8 +6,12 @@ import {
   IsOptional,
   IsString,
   Min,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
 import { MovementType } from '@prisma/client';
+import { Type } from 'class-transformer';
+import { BillDetailDto } from './bill-detail.dto';
 
 export class CreateTransactionDetailDto {
   @ApiProperty({
@@ -51,4 +55,15 @@ export class CreateTransactionDetailDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiProperty({
+    description: 'Detalles de billetes (desglose por denominación)',
+    type: [BillDetailDto],
+    required: false,
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BillDetailDto)
+  billDetails?: BillDetailDto[];
 }

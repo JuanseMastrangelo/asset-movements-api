@@ -11,6 +11,10 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { TransactionRulesModule } from './transaction-rules/transaction-rules.module';
 import { LogisticsModule } from './logistics/logistics.module';
 import { ConfigModule } from '@nestjs/config';
+import { AuditModule } from './audit/audit.module';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { AuditInterceptor } from './common/interceptors/audit.interceptor';
+import { DenominationsModule } from './denominations/denominations.module';
 
 @Module({
   imports: [
@@ -26,8 +30,16 @@ import { ConfigModule } from '@nestjs/config';
     DashboardModule,
     TransactionRulesModule,
     LogisticsModule,
+    AuditModule,
+    DenominationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
+    },
+  ],
 })
 export class AppModule {}
