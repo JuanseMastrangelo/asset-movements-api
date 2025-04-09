@@ -165,7 +165,11 @@ export class TransactionsController {
 
   @Patch(':id')
   @Role(UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Actualizar una transacción' })
+  @ApiOperation({
+    summary: 'Actualizar una transacción',
+    description:
+      'Permite actualizar datos básicos, detalles y billetes de una transacción. También soporta completar parcialmente la transacción, creando automáticamente una transacción pendiente para el saldo restante.',
+  })
   @ApiParam({ name: 'id', description: 'ID de la transacción' })
   @ApiResponse({
     status: 200,
@@ -193,15 +197,15 @@ export class TransactionsController {
 
   @Patch(':id/state')
   @Role(UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Actualizar el estado de una transacción' })
+  @ApiOperation({
+    summary: 'Actualizar el estado de una transacción',
+    description:
+      'Cambia el estado de una transacción. Si se cambia a CURRENT_ACCOUNT o COMPLETED, se actualizan los balances del cliente.',
+  })
   @ApiParam({ name: 'id', description: 'ID de la transacción' })
   @ApiResponse({
     status: 200,
     description: 'Estado de transacción actualizado',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Estado inválido o la transacción ya está en ese estado',
   })
   @ApiResponse({
     status: 404,
@@ -248,7 +252,9 @@ export class TransactionsController {
   @Role(UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Crear una transacción hija vinculada a una transacción padre',
+    summary: 'Crear una transacción hija',
+    description:
+      'Crea una transacción hija que está vinculada a una transacción padre. Las transacciones hijas ayudan a completar la cantidad total de la transacción padre. Si las transacciones hijas cubren el monto completo de la padre, esta se marca como completada automáticamente.',
   })
   @ApiParam({ name: 'parentId', description: 'ID de la transacción padre' })
   @ApiResponse({
@@ -256,12 +262,12 @@ export class TransactionsController {
     description: 'Transacción hija creada exitosamente',
   })
   @ApiResponse({
-    status: 400,
-    description: 'Datos inválidos en la solicitud',
-  })
-  @ApiResponse({
     status: 404,
     description: 'Transacción padre no encontrada',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Datos inválidos en la solicitud',
   })
   createChildTransaction(
     @Param('parentId') parentId: string,

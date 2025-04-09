@@ -397,74 +397,370 @@ export class TransactionsService {
     updateTransactionDto: UpdateTransactionDto,
     userId: string,
   ): Promise<TransactionResponse> {
-    // Verificar que la transacción existe
-    const existingTransaction = await this.prisma.transaction.findUnique({
+    const transaction = await this.prisma.transaction.findUnique({
       where: { id },
       include: {
         details: true,
+        client: true,
       },
     });
 
-    if (!existingTransaction) {
+    if (!transaction) {
       throw new NotFoundException(`Transacción con ID ${id} no encontrada`);
     }
 
-    // Verificar si la transacción está completada
-    if (existingTransaction.state === TransactionState.COMPLETED) {
+    // No se puede modificar una transacción completada o cancelada
+    if (
+      transaction.state === TransactionState.COMPLETED ||
+      transaction.state === TransactionState.CANCELLED
+    ) {
       throw new ConflictException(
-        'No se puede modificar una transacción completada',
+        `No se puede modificar una transacción en estado ${transaction.state}`,
       );
     }
 
-    // Realizar la actualización dentro de una transacción de base de datos
-    const transaction = await this.prisma.$transaction(async (tx) => {
-      // Actualizar la transacción principal
-      const transaction = await tx.transaction.update({
-        where: { id },
-        data: {
-          date: updateTransactionDto.date
-            ? new Date(updateTransactionDto.date)
-            : undefined,
-          notes: updateTransactionDto.notes,
-          // No permitimos actualizar el estado aquí, eso se hace con updateState
-        },
-      });
+    // Procesar actualización de transacción dentro de una transacción de BD
+    return this.prisma.$transaction(
+      async (tx) => {
+        // 1. Actualizar datos básicos de la transacción
+        const updateData: any = {};
 
-      // Si hay detalles nuevos, procesarlos
-      if (updateTransactionDto.details?.length) {
-        // Eliminar detalles anteriores si se indica
-        if (updateTransactionDto.replaceDetails) {
-          await tx.transactionDetail.deleteMany({
-            where: { transactionId: id },
+        if (updateTransactionDto.clientId) {
+          updateData.clientId = updateTransactionDto.clientId;
+        }
+
+        if (updateTransactionDto.date) {
+          updateData.date = new Date(updateTransactionDto.date);
+        }
+
+        if (updateTransactionDto.notes) {
+          updateData.notes = updateTransactionDto.notes;
+        }
+
+        if (updateTransactionDto.state) {
+          updateData.state = updateTransactionDto.state;
+        }
+
+        // 2. Manejar la lógica de actualización parcial si se especifica un porcentaje
+        let newPendingTransaction;
+
+        // Si se está completando parcialmente (se especifica un porcentaje)
+        if (
+          updateTransactionDto.completionPercentage &&
+          updateTransactionDto.completionPercentage < 100 &&
+          updateTransactionDto.completionPercentage > 0
+        ) {
+          // Actualizar estado a COMPLETED o CURRENT_ACCOUNT según lo que venga
+          updateData.state =
+            updateTransactionDto.state || TransactionState.CURRENT_ACCOUNT;
+
+          // Porcentaje a completar
+          const completionPercentage =
+            updateTransactionDto.completionPercentage;
+
+          // Actualizar la transacción principal
+          await tx.transaction.update({
+            where: { id },
+            data: updateData,
+          });
+
+          // Si se solicita crear transacción hija para el restante
+          if (updateTransactionDto.createChildForRemaining !== false) {
+            // Crear una nueva transacción para la parte que queda pendiente
+            newPendingTransaction = await tx.transaction.create({
+              data: {
+                clientId: transaction.clientId,
+                date: transaction.date,
+                state: TransactionState.PENDING,
+                notes: `${transaction.notes || ''} (Saldo pendiente: ${100 - completionPercentage}%)`,
+                createdBy: userId,
+                parentTransactionId: transaction.id,
+              },
+            });
+
+            // 2.1 Crear detalles para la nueva transacción pendiente
+            const pendingDetails = [];
+
+            for (const detail of transaction.details) {
+              const remainingAmount =
+                detail.amount * (1 - completionPercentage / 100);
+
+              if (remainingAmount > 0) {
+                pendingDetails.push({
+                  transactionId: newPendingTransaction.id,
+                  assetId: detail.assetId,
+                  movementType: detail.movementType,
+                  amount: remainingAmount,
+                  percentageDifference: detail.percentageDifference,
+                  notes: `${detail.notes || ''} (Parte pendiente: ${100 - completionPercentage}%)`,
+                  createdBy: userId,
+                });
+              }
+            }
+
+            if (pendingDetails.length > 0) {
+              await tx.transactionDetail.createMany({
+                data: pendingDetails,
+              });
+            }
+
+            // 2.2 Actualizar los detalles de la transacción actual
+            for (const detail of transaction.details) {
+              const completedAmount =
+                detail.amount * (completionPercentage / 100);
+
+              await tx.transactionDetail.update({
+                where: { id: detail.id },
+                data: {
+                  amount: completedAmount,
+                  notes: `${detail.notes || ''} (Parte completada: ${completionPercentage}%)`,
+                  updatedAt: new Date(),
+                },
+              });
+            }
+          }
+        } else {
+          // Actualización regular sin completado parcial
+          await tx.transaction.update({
+            where: { id },
+            data: updateData,
           });
         }
 
-        // Crear los nuevos detalles
-        await tx.transactionDetail.createMany({
-          data: updateTransactionDto.details.map((detail) => ({
-            transactionId: transaction.id,
-            assetId: detail.assetId,
-            movementType: detail.movementType,
-            amount: detail.amount,
-            percentageDifference: detail.percentageDifference,
-            notes: detail.notes,
-            createdBy: userId,
-          })),
+        // 3. Procesar detalles actualizados si se proporcionan
+        if (updateTransactionDto.details?.length) {
+          // Para cada detalle actualizado
+          for (const updatedDetail of updateTransactionDto.details) {
+            // Buscar el detalle existente
+            const existingDetail = transaction.details.find(
+              (d) =>
+                d.assetId === updatedDetail.assetId &&
+                d.movementType === updatedDetail.movementType,
+            );
+
+            if (existingDetail) {
+              // Actualizar detalle existente
+              await tx.transactionDetail.update({
+                where: { id: existingDetail.id },
+                data: {
+                  amount:
+                    updatedDetail.amount !== undefined
+                      ? updatedDetail.amount
+                      : existingDetail.amount,
+                  percentageDifference: updatedDetail.percentageDifference,
+                  notes: updatedDetail.notes,
+                  updatedAt: new Date(),
+                },
+              });
+
+              // Procesar detalles de billetes si se proporcionan
+              if (updatedDetail.billDetails?.length) {
+                await this.processBillDetails(
+                  tx,
+                  existingDetail.id,
+                  updatedDetail.billDetails,
+                );
+              }
+            } else {
+              // Crear nuevo detalle
+              const newDetail = await tx.transactionDetail.create({
+                data: {
+                  transactionId: id,
+                  assetId: updatedDetail.assetId,
+                  movementType: updatedDetail.movementType,
+                  amount: updatedDetail.amount,
+                  percentageDifference: updatedDetail.percentageDifference,
+                  notes: updatedDetail.notes,
+                  createdBy: userId,
+                },
+              });
+
+              // Procesar detalles de billetes para el nuevo detalle
+              if (updatedDetail.billDetails?.length) {
+                await this.processBillDetails(
+                  tx,
+                  newDetail.id,
+                  updatedDetail.billDetails,
+                );
+              }
+            }
+          }
+        }
+
+        // 4. Si el estado cambió a CURRENT_ACCOUNT o COMPLETED, actualizar balances
+        if (
+          (transaction.state === TransactionState.PENDING &&
+            (updateData.state === TransactionState.CURRENT_ACCOUNT ||
+              updateData.state === TransactionState.COMPLETED)) ||
+          (transaction.state === TransactionState.CURRENT_ACCOUNT &&
+            updateData.state === TransactionState.COMPLETED)
+        ) {
+          // Obtener los detalles actualizados
+          const transactionDetails = await tx.transactionDetail.findMany({
+            where: { transactionId: id },
+          });
+
+          // Procesar actualizaciones de balance
+          const balanceUpdates = transactionDetails.reduce(
+            (acc, detail) => {
+              const amountChange =
+                detail.movementType === MovementType.INCOME
+                  ? detail.amount
+                  : -detail.amount;
+
+              acc[detail.assetId] = (acc[detail.assetId] || 0) + amountChange;
+              return acc;
+            },
+            {} as Record<string, number>,
+          );
+
+          // Obtener balances existentes del cliente
+          const clientBalances = await tx.clientBalance.findMany({
+            where: {
+              clientId: transaction.clientId,
+              assetId: { in: Object.keys(balanceUpdates) },
+            },
+          });
+
+          // Obtener el cliente sistema
+          const systemClient = await tx.client.findFirst({
+            where: { name: 'Casa de Cambio (Sistema)' },
+          });
+
+          if (!systemClient) {
+            throw new NotFoundException('Cliente sistema no encontrado');
+          }
+
+          // Obtener balances existentes del sistema
+          const systemBalances = await tx.clientBalance.findMany({
+            where: {
+              clientId: systemClient.id,
+              assetId: { in: Object.keys(balanceUpdates) },
+            },
+          });
+
+          // Preparar actualizaciones de balance para el cliente
+          for (const assetId of Object.keys(balanceUpdates)) {
+            const existingClientBalance = clientBalances.find(
+              (b) => b.assetId === assetId,
+            );
+
+            // Actualizar balance del cliente (inverso al sistema)
+            if (existingClientBalance) {
+              await tx.clientBalance.update({
+                where: {
+                  clientId_assetId: {
+                    clientId: transaction.clientId,
+                    assetId: assetId,
+                  },
+                },
+                data: {
+                  balance:
+                    existingClientBalance.balance - balanceUpdates[assetId],
+                  transactionId: id,
+                },
+              });
+            } else {
+              await tx.clientBalance.create({
+                data: {
+                  clientId: transaction.clientId,
+                  assetId: assetId,
+                  balance: -balanceUpdates[assetId],
+                  transactionId: id,
+                },
+              });
+            }
+
+            // Actualizar balance del sistema
+            const existingSystemBalance = systemBalances.find(
+              (b) => b.assetId === assetId,
+            );
+            if (existingSystemBalance) {
+              await tx.clientBalance.update({
+                where: {
+                  clientId_assetId: {
+                    clientId: systemClient.id,
+                    assetId: assetId,
+                  },
+                },
+                data: {
+                  balance:
+                    existingSystemBalance.balance + balanceUpdates[assetId],
+                  transactionId: id,
+                },
+              });
+            } else {
+              await tx.clientBalance.create({
+                data: {
+                  clientId: systemClient.id,
+                  assetId: assetId,
+                  balance: balanceUpdates[assetId],
+                  transactionId: id,
+                },
+              });
+            }
+          }
+        }
+
+        // 5. Registrar cambio en log de auditoría
+        await tx.auditLog.create({
+          data: {
+            entityType: 'Transaction',
+            entityId: id,
+            action: 'Actualización de transacción',
+            changedData: {
+              clientId: updateTransactionDto.clientId,
+              date: updateTransactionDto.date,
+              state: updateTransactionDto.state,
+              notes: updateTransactionDto.notes,
+              completionPercentage: updateTransactionDto.completionPercentage,
+              details: updateTransactionDto.details
+                ? 'Se actualizaron los detalles'
+                : undefined,
+            },
+            changedBy: userId,
+          },
         });
-      }
 
-      // Retornar la transacción actualizada
-      return tx.transaction.findUnique({
-        where: { id },
-        include: {
-          details: true,
-          client: true,
-          clientBalances: true,
-        },
-      });
-    });
+        // 6. Retornar la transacción actualizada con sus detalles
+        const result = await tx.transaction.findUnique({
+          where: { id },
+          include: {
+            details: {
+              include: {
+                billDetails: {
+                  include: {
+                    denomination: true,
+                  },
+                },
+                asset: true,
+              },
+            },
+            client: true,
+            clientBalances: true,
+          },
+        });
 
-    return transaction;
+        // 7. Si se creó una transacción pendiente, incluirla en el log
+        if (newPendingTransaction) {
+          await tx.auditLog.create({
+            data: {
+              entityType: 'Transaction',
+              entityId: newPendingTransaction.id,
+              action: 'Creación de transacción pendiente',
+              changedData: {
+                parentTransactionId: id,
+                completionPercentage: updateTransactionDto.completionPercentage,
+              },
+              changedBy: userId,
+            },
+          });
+        }
+
+        return result;
+      },
+      { maxWait: 15000, timeout: 30000 },
+    );
   }
 
   async updateState(
