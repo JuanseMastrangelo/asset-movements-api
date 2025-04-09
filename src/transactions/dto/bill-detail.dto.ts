@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID, IsInt, Min } from 'class-validator';
+import { IsUUID, IsInt, Min, IsOptional, IsDateString } from 'class-validator';
 
 export class BillDetailDto {
   @ApiProperty({
@@ -17,4 +17,13 @@ export class BillDetailDto {
   @IsInt()
   @Min(1)
   quantity: number;
+
+  @ApiProperty({
+    description: 'Fecha de recepción de los billetes',
+    required: false,
+    example: '2023-01-01T12:00:00Z',
+  })
+  @IsOptional()
+  @IsDateString()
+  receivedDate?: string;
 }

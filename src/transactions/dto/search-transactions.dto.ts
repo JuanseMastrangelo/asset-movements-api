@@ -59,6 +59,15 @@ export class SearchTransactionsDto {
   parentTransactionId?: string;
 
   @ApiProperty({
+    description: 'ID de la transacción hija (para encontrar el padre)',
+    required: false,
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsOptional()
+  @IsUUID()
+  childTransactionId?: string;
+
+  @ApiProperty({
     description: 'ID del activo involucrado en los detalles',
     required: false,
     example: '123e4567-e89b-12d3-a456-426614174000',

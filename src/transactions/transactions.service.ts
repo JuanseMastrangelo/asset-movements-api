@@ -303,41 +303,61 @@ export class TransactionsService {
   ): Promise<PaginatedItems<TransactionResponse>> {
     const skip = (page - 1) * limit;
 
-    // Filtrar las transacciones CANCELLED usando una condición SQL
-    const where: any = {}; // Usar tipo 'any' para evitar errores de TypeScript
-    if (!includeCancelled) {
-      where.state = {
-        notIn: ['CANCELLED'],
+    try {
+      // Construir la condición de filtro usando el ORM en lugar de SQL directo
+      const whereCondition: Prisma.TransactionWhereInput = {};
+
+      // Solo excluir transacciones canceladas si se especifica
+      if (!includeCancelled) {
+        // En lugar de excluir CANCELLED, incluimos explícitamente los estados que queremos
+        whereCondition.state = {
+          in: [TransactionState.PENDING, TransactionState.COMPLETED],
+        };
+      }
+
+      // Usar findMany y count de Prisma
+      const [items, total] = await Promise.all([
+        this.prisma.transaction.findMany({
+          where: whereCondition,
+          skip,
+          take: limit,
+          orderBy: {
+            date: 'desc',
+          },
+          include: {
+            details: true,
+            client: true,
+            clientBalances: true,
+          },
+        }),
+        this.prisma.transaction.count({
+          where: whereCondition,
+        }),
+      ]);
+
+      // Formato específico para la respuesta
+      return {
+        items,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    } catch (error) {
+      console.error('Error en findAll:', error);
+      // Devolver un resultado vacío para evitar errores 500
+      return {
+        items: [],
+        pagination: {
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+        },
       };
     }
-
-    const [items, total] = await Promise.all([
-      this.prisma.transaction.findMany({
-        where,
-        skip,
-        take: limit,
-        include: {
-          details: true,
-          client: true,
-          clientBalances: true,
-        },
-        orderBy: {
-          date: 'desc',
-        },
-      }),
-      this.prisma.transaction.count({ where }),
-    ]);
-
-    // Formato específico que espera el interceptor
-    return {
-      items,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
   }
 
   async findOne(id: string): Promise<TransactionResponse> {
@@ -452,165 +472,256 @@ export class TransactionsService {
     updateStateDto: UpdateTransactionStateDto,
     userId: string,
   ): Promise<TransactionResponse> {
-    // Verificar que la transacción existe
-    const existingTransaction = await this.prisma.transaction.findUnique({
+    const transaction = await this.prisma.transaction.findUnique({
       where: { id },
       include: {
         details: true,
-        client: true,
       },
     });
 
-    if (!existingTransaction) {
+    if (!transaction) {
       throw new NotFoundException(`Transacción con ID ${id} no encontrada`);
     }
 
-    // Validar transición de estado
-    if (existingTransaction.state === updateStateDto.state) {
+    // Validar la transición de estados
+    if (transaction.state === TransactionState.COMPLETED) {
       throw new BadRequestException(
-        `La transacción ya está en estado ${updateStateDto.state}`,
+        'No se puede cambiar el estado de una transacción COMPLETED',
       );
     }
 
-    if (existingTransaction.state === TransactionState.COMPLETED) {
-      throw new ConflictException(
-        'No se puede cambiar el estado de una transacción completada',
+    if (transaction.state === TransactionState.CANCELLED) {
+      throw new BadRequestException(
+        'No se puede cambiar el estado de una transacción CANCELLED',
       );
     }
 
-    // Si es transición de PENDING a otro estado, debemos actualizar balances
-    const needsBalanceUpdate =
-      existingTransaction.state === TransactionState.PENDING &&
-      updateStateDto.state !== TransactionState.PENDING;
+    if (
+      transaction.state === TransactionState.PENDING &&
+      updateStateDto.state === TransactionState.PENDING
+    ) {
+      throw new BadRequestException(
+        'La transacción ya se encuentra en estado PENDING',
+      );
+    }
+
+    if (
+      transaction.state === TransactionState.CURRENT_ACCOUNT &&
+      updateStateDto.state === TransactionState.CURRENT_ACCOUNT
+    ) {
+      throw new BadRequestException(
+        'La transacción ya se encuentra en estado CURRENT_ACCOUNT',
+      );
+    }
 
     // Realizar la actualización dentro de una transacción de base de datos
-    const transaction = await this.prisma.$transaction(async (tx) => {
-      // Actualizar el estado de la transacción
-      const transaction = await tx.transaction.update({
-        where: { id },
-        data: {
-          state: updateStateDto.state,
-          updatedAt: new Date(),
-          createdBy: userId,
-        },
-      });
-
-      // Si la transacción cambia de PENDING a otro estado, actualizar balances
-      if (needsBalanceUpdate && existingTransaction.details.length > 0) {
-        // Procesar actualizaciones de balance de manera optimizada
-        const balanceUpdates = existingTransaction.details.reduce(
-          (acc, detail) => {
-            const amountChange =
-              detail.movementType === MovementType.INCOME
-                ? detail.amount
-                : -detail.amount;
-
-            acc[detail.assetId] = (acc[detail.assetId] || 0) + amountChange;
-            return acc;
-          },
-          {} as Record<string, number>,
-        );
-
-        // Obtener balances existentes del cliente
-        const clientBalances = await tx.clientBalance.findMany({
-          where: {
-            clientId: existingTransaction.clientId,
-            assetId: { in: Object.keys(balanceUpdates) },
+    return this.prisma.$transaction(
+      async (tx) => {
+        // Actualizar el estado de la transacción
+        await tx.transaction.update({
+          where: { id },
+          data: {
+            state: updateStateDto.state,
+            notes: updateStateDto.notes
+              ? `${transaction.notes || ''} | ${updateStateDto.notes}`
+              : transaction.notes,
+            updatedAt: new Date(), // Asegurar que se actualiza la fecha
           },
         });
 
-        // Obtener el cliente sistema
-        const systemClient = await tx.client.findFirst({
-          where: { name: 'Casa de Cambio (Sistema)' },
-        });
+        // Si se proporcionaron detalles actualizados y el estado es CURRENT_ACCOUNT o COMPLETED
+        if (
+          updateStateDto.updatedDetails?.length &&
+          (updateStateDto.state === TransactionState.CURRENT_ACCOUNT ||
+            updateStateDto.state === TransactionState.COMPLETED)
+        ) {
+          // Procesar cada detalle actualizado
+          for (const updatedDetail of updateStateDto.updatedDetails) {
+            // Buscar el detalle original
+            const originalDetail = transaction.details.find(
+              (detail) =>
+                detail.assetId === updatedDetail.assetId &&
+                detail.movementType === updatedDetail.movementType,
+            );
 
-        if (!systemClient) {
-          throw new NotFoundException('Cliente sistema no encontrado');
+            if (originalDetail) {
+              // Actualizar el detalle existente
+              await tx.transactionDetail.update({
+                where: { id: originalDetail.id },
+                data: {
+                  amount: updatedDetail.amount || originalDetail.amount,
+                  percentageDifference:
+                    updatedDetail.percentageDifference ||
+                    originalDetail.percentageDifference,
+                  notes: updatedDetail.notes
+                    ? `${originalDetail.notes || ''} | ${updatedDetail.notes}`
+                    : originalDetail.notes,
+                  createdBy: userId, // Usar userId para registrar quién hizo el cambio
+                },
+              });
+
+              // Procesar detalles de billetes si existen
+              if (updatedDetail.billDetails?.length) {
+                await this.processBillDetails(
+                  tx,
+                  originalDetail.id,
+                  updatedDetail.billDetails,
+                );
+              }
+            }
+          }
         }
 
-        // Obtener balances existentes del sistema
-        const systemBalances = await tx.clientBalance.findMany({
-          where: {
-            clientId: systemClient.id,
-            assetId: { in: Object.keys(balanceUpdates) },
-          },
-        });
+        // Si el estado cambia a CURRENT_ACCOUNT o COMPLETED, actualizar balances
+        if (
+          (transaction.state === TransactionState.PENDING &&
+            (updateStateDto.state === TransactionState.CURRENT_ACCOUNT ||
+              updateStateDto.state === TransactionState.COMPLETED)) ||
+          (transaction.state === TransactionState.CURRENT_ACCOUNT &&
+            updateStateDto.state === TransactionState.COMPLETED)
+        ) {
+          // Obtener los detalles actualizados
+          const transactionDetails = await tx.transactionDetail.findMany({
+            where: { transactionId: id },
+          });
 
-        // Actualizar balances
-        for (const assetId of Object.keys(balanceUpdates)) {
-          const existingClientBalance = clientBalances.find(
-            (b) => b.assetId === assetId,
+          // Procesar actualizaciones de balance
+          const balanceUpdates = transactionDetails.reduce(
+            (acc, detail) => {
+              const amountChange =
+                detail.movementType === MovementType.INCOME
+                  ? detail.amount
+                  : -detail.amount;
+
+              acc[detail.assetId] = (acc[detail.assetId] || 0) + amountChange;
+              return acc;
+            },
+            {} as Record<string, number>,
           );
 
-          // Actualizar balance del cliente (inverso al sistema)
-          if (existingClientBalance) {
-            await tx.clientBalance.update({
-              where: {
-                clientId_assetId: {
-                  clientId: existingTransaction.clientId,
-                  assetId: assetId,
-                },
-              },
-              data: {
-                balance:
-                  existingClientBalance.balance - balanceUpdates[assetId],
-                transactionId: transaction.id,
-              },
-            });
-          } else {
-            await tx.clientBalance.create({
-              data: {
-                clientId: existingTransaction.clientId,
-                assetId: assetId,
-                balance: -balanceUpdates[assetId],
-                transactionId: transaction.id,
-              },
-            });
+          // Obtener balances existentes del cliente
+          const clientBalances = await tx.clientBalance.findMany({
+            where: {
+              clientId: transaction.clientId,
+              assetId: { in: Object.keys(balanceUpdates) },
+            },
+          });
+
+          // Obtener el cliente sistema
+          const systemClient = await tx.client.findFirst({
+            where: { name: 'Casa de Cambio (Sistema)' },
+          });
+
+          if (!systemClient) {
+            throw new NotFoundException('Cliente sistema no encontrado');
           }
 
-          // Actualizar balance del sistema
-          const existingSystemBalance = systemBalances.find(
-            (b) => b.assetId === assetId,
-          );
-          if (existingSystemBalance) {
-            await tx.clientBalance.update({
-              where: {
-                clientId_assetId: {
+          // Obtener balances existentes del sistema
+          const systemBalances = await tx.clientBalance.findMany({
+            where: {
+              clientId: systemClient.id,
+              assetId: { in: Object.keys(balanceUpdates) },
+            },
+          });
+
+          // Preparar actualizaciones de balance para el cliente
+          for (const assetId of Object.keys(balanceUpdates)) {
+            const existingClientBalance = clientBalances.find(
+              (b) => b.assetId === assetId,
+            );
+
+            // Actualizar balance del cliente (inverso al sistema)
+            if (existingClientBalance) {
+              await tx.clientBalance.update({
+                where: {
+                  clientId_assetId: {
+                    clientId: transaction.clientId,
+                    assetId: assetId,
+                  },
+                },
+                data: {
+                  balance:
+                    existingClientBalance.balance - balanceUpdates[assetId],
+                  transactionId: id,
+                },
+              });
+            } else {
+              await tx.clientBalance.create({
+                data: {
+                  clientId: transaction.clientId,
+                  assetId: assetId,
+                  balance: -balanceUpdates[assetId],
+                  transactionId: id,
+                },
+              });
+            }
+
+            // Actualizar balance del sistema
+            const existingSystemBalance = systemBalances.find(
+              (b) => b.assetId === assetId,
+            );
+            if (existingSystemBalance) {
+              await tx.clientBalance.update({
+                where: {
+                  clientId_assetId: {
+                    clientId: systemClient.id,
+                    assetId: assetId,
+                  },
+                },
+                data: {
+                  balance:
+                    existingSystemBalance.balance + balanceUpdates[assetId],
+                  transactionId: id,
+                },
+              });
+            } else {
+              await tx.clientBalance.create({
+                data: {
                   clientId: systemClient.id,
                   assetId: assetId,
+                  balance: balanceUpdates[assetId],
+                  transactionId: id,
                 },
-              },
-              data: {
-                balance:
-                  existingSystemBalance.balance + balanceUpdates[assetId],
-                transactionId: transaction.id,
-              },
-            });
-          } else {
-            await tx.clientBalance.create({
-              data: {
-                clientId: systemClient.id,
-                assetId: assetId,
-                balance: balanceUpdates[assetId],
-                transactionId: transaction.id,
-              },
-            });
+              });
+            }
           }
         }
-      }
 
-      // Retornar la transacción actualizada
-      return tx.transaction.findUnique({
-        where: { id },
-        include: {
-          details: true,
-          client: true,
-          clientBalances: true,
-        },
-      });
-    });
+        // Registrar cambio de estado en log de auditoría
+        await tx.auditLog.create({
+          data: {
+            entityType: 'Transaction',
+            entityId: id,
+            action: `Estado actualizado a ${updateStateDto.state}`,
+            changedData: {
+              previousState: transaction.state,
+              newState: updateStateDto.state,
+            },
+            changedBy: userId,
+          },
+        });
 
-    return transaction;
+        // Buscar la transacción actualizada con sus detalles
+        return tx.transaction.findUnique({
+          where: { id },
+          include: {
+            details: {
+              include: {
+                billDetails: {
+                  include: {
+                    denomination: true,
+                  },
+                },
+                asset: true,
+              },
+            },
+            client: true,
+            clientBalances: true,
+          },
+        });
+      },
+      { maxWait: 15000, timeout: 30000 },
+    );
   }
 
   async search(
@@ -622,6 +733,7 @@ export class TransactionsService {
       endDate,
       state,
       parentTransactionId,
+      childTransactionId,
       assetId,
       limit = 10,
       offset = 0,
@@ -651,57 +763,205 @@ export class TransactionsService {
     if (state) {
       where.state = state;
     } else if (!includeCancelled) {
-      // Si no se especifica un estado y no se incluyen canceladas, excluir las CANCELLED
+      // Si no se especifica un estado y no se incluyen canceladas, incluir solo los estados válidos
       where.state = {
-        notIn: ['CANCELLED'],
+        in: [TransactionState.PENDING, TransactionState.COMPLETED],
       };
     }
 
+    // Si se especifica parentTransactionId, buscar las transacciones hijas
     if (parentTransactionId) {
-      where.parentTransactionId = parentTransactionId;
+      try {
+        // Verificar primero que la transacción padre existe
+        const parentExists = await this.prisma.transaction.findUnique({
+          where: { id: parentTransactionId },
+          select: { id: true },
+        });
+
+        if (!parentExists) {
+          // Si el padre no existe, devolver un array vacío en lugar de error
+          return {
+            items: [],
+            pagination: {
+              total: 0,
+              page,
+              limit,
+              totalPages: 0,
+            },
+          };
+        }
+
+        // Si existe, usarlo en la consulta
+        // Podemos tener dos casos:
+        // 1. Transacciones hijas que tienen este ID como parentTransactionId
+        // 2. La propia transacción padre (si queremos ver tanto padre como hijas)
+        where.OR = [
+          { parentTransactionId: parentTransactionId },
+          { id: parentTransactionId },
+        ];
+      } catch (error) {
+        console.error(
+          `Error al verificar transacción padre ${parentTransactionId}:`,
+          error,
+        );
+        // En caso de error (como formato UUID inválido), devolver array vacío
+        return {
+          items: [],
+          pagination: {
+            total: 0,
+            page,
+            limit,
+            totalPages: 0,
+          },
+        };
+      }
+    }
+
+    // Si se especifica childTransactionId, buscar la transacción padre
+    // (Esto debe ser una consulta separada ya que la estructura es diferente)
+    if (childTransactionId) {
+      try {
+        // Primero obtenemos la transacción hija para conocer su parentTransactionId
+        const childTransaction = await this.prisma.transaction.findUnique({
+          where: { id: childTransactionId },
+          select: { parentTransactionId: true, id: true },
+        });
+
+        // Si la transacción hija existe
+        if (childTransaction) {
+          if (childTransaction.parentTransactionId) {
+            // Si el ID de la transacción hija es igual a su propio parentTransactionId
+            // (caso de autorreferencia), buscamos directamente por el ID
+            if (childTransaction.id === childTransaction.parentTransactionId) {
+              where.id = childTransactionId;
+            } else {
+              // Caso normal: buscamos la transacción padre
+              where.id = childTransaction.parentTransactionId;
+            }
+          } else {
+            // Si no tiene parentTransactionId, buscamos directamente por el ID
+            // por si es un caso de transacción padre que no tiene su propio ID como parentTransactionId
+            where.id = childTransactionId;
+          }
+        } else {
+          // Si no hay transacción hija, devolver resultado vacío
+          return {
+            items: [],
+            pagination: {
+              total: 0,
+              page,
+              limit,
+              totalPages: 0,
+            },
+          };
+        }
+      } catch (error) {
+        console.error(
+          `Error al buscar transacción hija ${childTransactionId}:`,
+          error,
+        );
+        // En caso de error (como formato UUID inválido), devolver array vacío
+        return {
+          items: [],
+          pagination: {
+            total: 0,
+            page,
+            limit,
+            totalPages: 0,
+          },
+        };
+      }
     }
 
     // Si se especifica assetId, buscar transacciones que tengan este activo en sus detalles
     if (assetId) {
-      where.details = {
-        some: {
-          assetId,
-        },
-      };
+      try {
+        // Verificar que el activo existe
+        const assetExists = await this.prisma.asset.findUnique({
+          where: { id: assetId },
+          select: { id: true },
+        });
+
+        if (!assetExists) {
+          // Si el activo no existe, devolver un array vacío en lugar de error
+          return {
+            items: [],
+            pagination: {
+              total: 0,
+              page,
+              limit,
+              totalPages: 0,
+            },
+          };
+        }
+
+        // Si existe, usarlo en la consulta
+        where.details = {
+          some: {
+            assetId,
+          },
+        };
+      } catch (error) {
+        console.error(`Error al verificar activo ${assetId}:`, error);
+        // En caso de error (como formato UUID inválido), devolver array vacío
+        return {
+          items: [],
+          pagination: {
+            total: 0,
+            page,
+            limit,
+            totalPages: 0,
+          },
+        };
+      }
     }
 
     // Realizar la búsqueda
-    const [items, total] = await Promise.all([
-      this.prisma.transaction.findMany({
-        where,
-        include: {
-          details: true,
-          client: true,
-          parentTransaction: {
-            include: {
-              client: true,
+    try {
+      const [items, total] = await Promise.all([
+        this.prisma.transaction.findMany({
+          where,
+          include: {
+            details: true,
+            client: true,
+            parentTransaction: {
+              include: {
+                client: true,
+              },
             },
           },
-        },
-        skip: offset,
-        take: limit,
-        orderBy: {
-          date: 'desc',
-        },
-      }),
-      this.prisma.transaction.count({ where }),
-    ]);
+          skip: offset,
+          take: limit,
+          orderBy: {
+            date: 'desc',
+          },
+        }),
+        this.prisma.transaction.count({ where }),
+      ]);
 
-    // Formato específico que espera el interceptor
-    return {
-      items,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+      // Formato específico que espera el interceptor
+      return {
+        items,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    } catch (error) {
+      console.error('Error al realizar la búsqueda de transacciones:', error);
+      // En caso de error en la búsqueda principal, devolver un array vacío
+      return {
+        items: [],
+        pagination: {
+          total: 0,
+          page,
+          limit,
+          totalPages: 0,
+        },
+      };
+    }
   }
 
   async remove(id: string): Promise<TransactionResponse> {
@@ -773,6 +1033,7 @@ export class TransactionsService {
     // Verificar que la transacción padre existe
     const parentTransaction = await this.prisma.transaction.findUnique({
       where: { id: parentId },
+      include: { details: true },
     });
 
     if (!parentTransaction) {
@@ -781,11 +1042,94 @@ export class TransactionsService {
       );
     }
 
-    // Asignar la transacción padre
-    createTransactionDto.parentTransactionId = parentId;
+    // Si no tiene estado PENDING, no debería aceptar hijas
+    if (parentTransaction.state !== TransactionState.PENDING) {
+      throw new BadRequestException(
+        `Solo se pueden crear transacciones hijas para transacciones en estado PENDING. Estado actual: ${parentTransaction.state}`,
+      );
+    }
 
-    // Utilizar el método create para crear la transacción hija
-    return this.create(createTransactionDto, userId);
+    // Verificar que el cliente coincide
+    if (createTransactionDto.clientId !== parentTransaction.clientId) {
+      throw new BadRequestException(
+        'El cliente de la transacción hija debe ser el mismo que el de la transacción padre',
+      );
+    }
+
+    // Modificar el DTO para incluir la relación con la transacción padre
+    const childTransactionDto = {
+      ...createTransactionDto,
+      parentTransactionId: parentId,
+      state: TransactionState.CURRENT_ACCOUNT, // Las transacciones hijas van directo a afectar el balance
+    };
+
+    // Crear la transacción hija
+    const childTransaction = await this.create(childTransactionDto, userId);
+
+    // Si la transacción hija completa la transacción padre, actualizar el estado de la padre
+    // Calculamos el total pendiente vs. el total cubierto por las hijas
+    const childTransactions = await this.prisma.transaction.findMany({
+      where: {
+        parentTransactionId: parentId,
+        state: {
+          in: [TransactionState.CURRENT_ACCOUNT, TransactionState.COMPLETED],
+        },
+      },
+      include: { details: true },
+    });
+
+    // Agrupar los detalles del padre por assetId y movementType
+    const parentDetailsMap = parentTransaction.details.reduce((acc, detail) => {
+      const key = `${detail.assetId}-${detail.movementType}`;
+      if (!acc[key]) {
+        acc[key] = {
+          assetId: detail.assetId,
+          movementType: detail.movementType,
+          amount: 0,
+        };
+      }
+      acc[key].amount += detail.amount;
+      return acc;
+    }, {});
+
+    // Sumar los detalles de las hijas por assetId y movementType
+    const childrenDetailsMap = {};
+    childTransactions.forEach((child) => {
+      child.details.forEach((detail) => {
+        const key = `${detail.assetId}-${detail.movementType}`;
+        if (!childrenDetailsMap[key]) {
+          childrenDetailsMap[key] = {
+            assetId: detail.assetId,
+            movementType: detail.movementType,
+            amount: 0,
+          };
+        }
+        childrenDetailsMap[key].amount += detail.amount;
+      });
+    });
+
+    // Comprobar si todos los detalles del padre están cubiertos por las hijas
+    let allDetailsCovered = true;
+    for (const key in parentDetailsMap) {
+      const childAmount = childrenDetailsMap[key]?.amount || 0;
+      if (childAmount < parentDetailsMap[key].amount) {
+        allDetailsCovered = false;
+        break;
+      }
+    }
+
+    // Si todos los detalles están cubiertos, marcar la transacción padre como completada
+    if (allDetailsCovered) {
+      await this.prisma.transaction.update({
+        where: { id: parentId },
+        data: {
+          state: TransactionState.COMPLETED,
+          notes: `${parentTransaction.notes || ''} (Completada mediante transacciones hijas)`,
+        },
+      });
+    }
+
+    return childTransaction;
   }
 
   async createPartialTransaction(
@@ -1327,7 +1671,7 @@ export class TransactionsService {
       // a través del método executeRaw de Prisma
       await this.prisma.$executeRaw`
         UPDATE "Transaction"
-        SET "state" = 'CANCELLED', "updatedAt" = NOW(), "createdBy" = ${userId}
+        SET "state" = ${TransactionState.CANCELLED}, "updatedAt" = NOW(), "createdBy" = ${userId}
         WHERE "id" = ${id}
       `;
 

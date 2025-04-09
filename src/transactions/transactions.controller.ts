@@ -105,7 +105,15 @@ export class TransactionsController {
     @Query('includeCancelled', new DefaultValuePipe(false))
     includeCancelled: boolean,
   ) {
-    return this.transactionsService.findAll(page, limit, includeCancelled);
+    try {
+      return this.transactionsService.findAll(page, limit, includeCancelled);
+    } catch (error) {
+      console.error('Error en findAll:', error);
+      throw new HttpException(
+        'Error al listar transacciones: ' + error.message,
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   @Get('search')
@@ -122,7 +130,15 @@ export class TransactionsController {
     description: 'Resultados de la búsqueda',
   })
   async search(@Query() searchDto: SearchTransactionsDto) {
-    return this.transactionsService.search(searchDto);
+    try {
+      return await this.transactionsService.search(searchDto);
+    } catch (error) {
+      console.error('Error en search:', error);
+      throw new HttpException(
+        'Error al buscar transacciones: ' + error.message,
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   @Get(':id')
