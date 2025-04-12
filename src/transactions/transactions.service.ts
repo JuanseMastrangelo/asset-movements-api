@@ -1530,6 +1530,9 @@ export class TransactionsService {
                 // Para EXPENSE, el sistema debe entregar dinero (pendiente negativo)
                 pendingBalances[assetId] -= pendingAmount;
               }
+            } else {
+              // Si el pendiente es cero o casi cero, asegurarse que el balance quede en cero
+              pendingBalances[assetId] = 0;
             }
           }
           console.log(
@@ -1613,10 +1616,13 @@ export class TransactionsService {
             }
 
             try {
+              // Verificar si el balance pendiente es 0 (totalmente cubierto)
+              const balanceValue = pendingBalances[assetId];
+
               if (existingBalance) {
                 // Actualizar balance existente (establecer directamente, no sumar)
                 console.log(
-                  `[DEBUG] Actualizando balance existente a: ${pendingBalances[assetId]}`,
+                  `[DEBUG] Actualizando balance existente a: ${balanceValue}`,
                 );
                 await tx.clientBalance.update({
                   where: {
@@ -1626,20 +1632,62 @@ export class TransactionsService {
                     },
                   },
                   data: {
-                    balance: pendingBalances[assetId],
+                    balance: balanceValue,
                     transactionId: parentId,
                   },
                 });
-              } else {
-                // Crear nuevo balance
+              } else if (balanceValue !== 0) {
+                // Solo crear un nuevo balance si no es cero
                 console.log(
-                  `[DEBUG] Creando nuevo balance con valor: ${pendingBalances[assetId]} para assetId: ${assetId}`,
+                  `[DEBUG] Creando nuevo balance con valor: ${balanceValue} para assetId: ${assetId}`,
                 );
                 await tx.clientBalance.create({
                   data: {
                     clientId: updatedParentTransaction.clientId,
                     assetId,
-                    balance: pendingBalances[assetId],
+                    balance: balanceValue,
+                    transactionId: parentId,
+                  },
+                });
+              }
+
+              // Actualizar también el balance del sistema (inverso al del cliente)
+              const systemBalanceValue = -balanceValue; // El sistema tiene el balance inverso
+              const existingSystemBalance = await tx.clientBalance.findUnique({
+                where: {
+                  clientId_assetId: {
+                    clientId: systemClient.id,
+                    assetId,
+                  },
+                },
+              });
+
+              if (existingSystemBalance) {
+                console.log(
+                  `[DEBUG] Actualizando balance del sistema a: ${systemBalanceValue}`,
+                );
+                await tx.clientBalance.update({
+                  where: {
+                    clientId_assetId: {
+                      clientId: systemClient.id,
+                      assetId,
+                    },
+                  },
+                  data: {
+                    balance: systemBalanceValue,
+                    transactionId: parentId,
+                  },
+                });
+              } else if (systemBalanceValue !== 0) {
+                // Solo crear un nuevo balance si no es cero
+                console.log(
+                  `[DEBUG] Creando nuevo balance del sistema con valor: ${systemBalanceValue} para assetId: ${assetId}`,
+                );
+                await tx.clientBalance.create({
+                  data: {
+                    clientId: systemClient.id,
+                    assetId,
+                    balance: systemBalanceValue,
                     transactionId: parentId,
                   },
                 });
