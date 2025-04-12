@@ -7,11 +7,35 @@ import {
   IsNumber,
   Min,
   IsBoolean,
+  IsString,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TransactionState } from '@prisma/client';
 
 export class SearchTransactionsDto {
+  @ApiProperty({
+    description: 'Página para paginación',
+    required: false,
+    example: 1,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Type(() => Number)
+  page?: number;
+
+  @ApiProperty({
+    description: 'Número de elementos por página',
+    required: false,
+    example: 10,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Type(() => Number)
+  limit?: number;
+
   @ApiProperty({
     description: 'ID del cliente',
     required: false,
@@ -77,28 +101,48 @@ export class SearchTransactionsDto {
   assetId?: string;
 
   @ApiProperty({
-    description: 'Número máximo de resultados',
+    description: 'Monto mínimo',
     required: false,
-    default: 20,
-    example: 10,
+    example: 100,
   })
   @IsOptional()
   @IsNumber()
+  @Min(0)
   @Type(() => Number)
-  @Min(1)
-  limit?: number;
+  minAmount?: number;
 
   @ApiProperty({
-    description: 'Desplazamiento para paginación',
+    description: 'Monto máximo',
     required: false,
-    default: 0,
-    example: 0,
+    example: 1000,
   })
   @IsOptional()
   @IsNumber()
-  @Type(() => Number)
   @Min(0)
-  offset?: number;
+  @Type(() => Number)
+  maxAmount?: number;
+
+  @ApiProperty({
+    description: 'Campo para ordenar',
+    required: false,
+    example: 'date',
+    enum: ['date', 'amount', 'createdAt', 'updatedAt'],
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['date', 'amount', 'createdAt', 'updatedAt'])
+  sortBy?: string;
+
+  @ApiProperty({
+    description: 'Orden (asc o desc)',
+    required: false,
+    example: 'desc',
+    enum: ['asc', 'desc'],
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
 
   @ApiProperty({
     description: 'Incluir transacciones canceladas en los resultados',
