@@ -17,6 +17,8 @@ import { UpdateTransactionStateDto } from './dto/update-transaction-state.dto';
 import { SearchTransactionsDto } from './dto/search-transactions.dto';
 import { CreatePartialTransactionDto } from './dto/create-partial-transaction.dto';
 import { CompletePendingTransactionDto } from './dto/complete-pending-transaction.dto';
+import { CreateReconciliationDto } from './dto/create-reconciliation.dto';
+import { FindClientsForReconciliationDto } from './dto/find-clients-for-reconciliation.dto';
 
 // Definir un tipo específico para el retorno
 type TransactionResponse = Transaction & {
@@ -2365,6 +2367,328 @@ export class TransactionsService {
       console.error('Error al cancelar la transacción:', error);
       throw new BadRequestException(
         `Error al cancelar la transacción: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Concilia fondos entre clientes, tomando un saldo positivo de un cliente y
+   * distribuyéndolo para saldar deudas con otros clientes
+   */
+  async reconcile(
+    reconciliationDto: CreateReconciliationDto,
+    userId: string,
+  ): Promise<any> {
+    try {
+      return this.prisma.$transaction(
+        async (tx) => {
+          // 1. Verificar que la transacción origen existe
+          const sourceTransaction = await tx.transaction.findUnique({
+            where: { id: reconciliationDto.sourceTransactionId },
+            include: {
+              client: true,
+              clientBalances: {
+                where: { assetId: reconciliationDto.sourceAssetId },
+              },
+            },
+          });
+
+          if (!sourceTransaction) {
+            throw new NotFoundException(
+              `Transacción origen con ID ${reconciliationDto.sourceTransactionId} no encontrada`,
+            );
+          }
+
+          // 2. Verificar que el cliente de la transacción origen tiene saldo suficiente
+          const sourceClientBalance = sourceTransaction.clientBalances.find(
+            (b) => b.assetId === reconciliationDto.sourceAssetId,
+          );
+
+          if (!sourceClientBalance) {
+            throw new BadRequestException(
+              `El cliente no tiene saldo en el activo especificado`,
+            );
+          }
+
+          // El balance positivo indica que el cliente debe dinero a la casa de cambio
+          // Por lo tanto, este saldo positivo puede destinarse a otros clientes
+          if (sourceClientBalance.balance <= 0) {
+            throw new BadRequestException(
+              `El cliente no tiene saldo positivo disponible para conciliar`,
+            );
+          }
+
+          // 3. Sumar el total de conciliaciones solicitadas
+          const totalReconciliationAmount = reconciliationDto.targets.reduce(
+            (sum, target) => sum + target.amount,
+            0,
+          );
+
+          // 4. Verificar que no excede el saldo disponible
+          if (totalReconciliationAmount > sourceClientBalance.balance) {
+            throw new BadRequestException(
+              `El monto total a conciliar (${totalReconciliationAmount}) excede el saldo disponible (${sourceClientBalance.balance})`,
+            );
+          }
+
+          // 5. Obtener el cliente sistema
+          const systemClient = await tx.client.findFirst({
+            where: { name: 'Casa de Cambio (Sistema)' },
+          });
+
+          if (!systemClient) {
+            throw new NotFoundException('Cliente sistema no encontrado');
+          }
+
+          // 6. Procesar cada transacción destino
+          const reconciliations = [];
+          for (const target of reconciliationDto.targets) {
+            // Verificar que el cliente destino existe
+            const targetClient = await tx.client.findUnique({
+              where: { id: target.clientId },
+            });
+
+            if (!targetClient) {
+              throw new NotFoundException(
+                `Cliente destino con ID ${target.clientId} no encontrado`,
+              );
+            }
+
+            // Verificar que el activo coincide con el origen o es el solicitado
+            if (target.assetId !== reconciliationDto.sourceAssetId) {
+              throw new BadRequestException(
+                `El activo del destino debe coincidir con el activo de origen`,
+              );
+            }
+
+            // Buscar el balance del cliente destino
+            const targetClientBalance = await tx.clientBalance.findUnique({
+              where: {
+                clientId_assetId: {
+                  clientId: target.clientId,
+                  assetId: target.assetId,
+                },
+              },
+            });
+
+            // Verificar que el cliente destino tiene un balance negativo (la casa de cambio le debe)
+            if (!targetClientBalance || targetClientBalance.balance >= 0) {
+              throw new BadRequestException(
+                `El cliente destino no tiene saldo negativo para conciliar en este activo`,
+              );
+            }
+
+            // Verificar que no intentamos conciliar más de lo que debemos
+            const targetNegativeBalance = Math.abs(targetClientBalance.balance); // Convertir a positivo para comparar
+            if (target.amount > targetNegativeBalance) {
+              throw new BadRequestException(
+                `El monto a conciliar (${target.amount}) excede la deuda con el cliente destino (${targetNegativeBalance})`,
+              );
+            }
+
+            // Crear una nueva transacción para registrar la conciliación
+            const targetTransaction = await tx.transaction.create({
+              data: {
+                clientId: target.clientId,
+                date: new Date(),
+                state: TransactionState.COMPLETED,
+                notes: `Conciliación de saldo: ${target.notes || ''} (Origen: Cliente ${sourceTransaction.client.name}, ID: ${sourceTransaction.id})`,
+                createdBy: userId,
+              },
+            });
+
+            // Crear el detalle de la transacción
+            await tx.transactionDetail.create({
+              data: {
+                transactionId: targetTransaction.id,
+                assetId: target.assetId,
+                movementType: MovementType.EXPENSE, // El cliente recibe fondos
+                amount: target.amount,
+                notes: `Conciliación de saldo desde cliente ${sourceTransaction.client.name}`,
+                createdBy: userId,
+              },
+            });
+
+            // Actualizar el balance del cliente destino
+            await tx.clientBalance.update({
+              where: {
+                clientId_assetId: {
+                  clientId: target.clientId,
+                  assetId: target.assetId,
+                },
+              },
+              data: {
+                balance: targetClientBalance.balance + target.amount, // El balance negativo se acerca a cero
+                transactionId: targetTransaction.id,
+              },
+            });
+
+            // Registrar la conciliación
+            const reconciliation = await tx.reconciliation.create({
+              data: {
+                sourceTransactionId: reconciliationDto.sourceTransactionId,
+                targetTransactionId: targetTransaction.id,
+                amount: target.amount,
+                notes: reconciliationDto.notes || 'Conciliación de saldos',
+                createdBy: userId,
+              },
+            });
+
+            reconciliations.push(reconciliation);
+          }
+
+          // 7. Actualizar el balance del cliente origen
+          await tx.clientBalance.update({
+            where: {
+              clientId_assetId: {
+                clientId: sourceTransaction.clientId,
+                assetId: reconciliationDto.sourceAssetId,
+              },
+            },
+            data: {
+              balance: sourceClientBalance.balance - totalReconciliationAmount,
+              transactionId: sourceTransaction.id,
+            },
+          });
+
+          // 8. Actualizar el balance del cliente sistema
+          const systemBalance = await tx.clientBalance.findUnique({
+            where: {
+              clientId_assetId: {
+                clientId: systemClient.id,
+                assetId: reconciliationDto.sourceAssetId,
+              },
+            },
+          });
+
+          if (systemBalance) {
+            await tx.clientBalance.update({
+              where: {
+                clientId_assetId: {
+                  clientId: systemClient.id,
+                  assetId: reconciliationDto.sourceAssetId,
+                },
+              },
+              data: {
+                balance: systemBalance.balance - totalReconciliationAmount,
+                transactionId: sourceTransaction.id,
+              },
+            });
+          }
+
+          // 9. Registrar en el log de auditoría
+          await tx.auditLog.create({
+            data: {
+              entityType: 'Reconciliation',
+              entityId: reconciliations[0].id, // Usamos el ID de la primera conciliación
+              action: 'Conciliación de saldos',
+              changedData: {
+                sourceTransactionId: reconciliationDto.sourceTransactionId,
+                sourceAssetId: reconciliationDto.sourceAssetId,
+                totalAmount: totalReconciliationAmount,
+                targetCount: reconciliationDto.targets.length,
+              },
+              changedBy: userId,
+            },
+          });
+
+          // 10. Retornar las conciliaciones creadas
+          return {
+            reconciliations,
+            totalAmount: totalReconciliationAmount,
+            sourceTransaction: {
+              id: sourceTransaction.id,
+              client: sourceTransaction.client,
+              previousBalance: sourceClientBalance.balance,
+              newBalance:
+                sourceClientBalance.balance - totalReconciliationAmount,
+            },
+          };
+        },
+        {
+          timeout: 15000,
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
+    } catch (error) {
+      console.error('Error en reconcile:', error);
+      throw new BadRequestException(
+        `Error al conciliar transacciones: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Busca clientes con balances negativos (a los que se les debe) en un activo específico
+   * para posibles conciliaciones
+   */
+  async findClientsForReconciliation(
+    findClientsDto: FindClientsForReconciliationDto,
+  ): Promise<any> {
+    try {
+      // Buscar todos los clientes con balance negativo en el activo especificado
+      const clientsWithNegativeBalance = await this.prisma.$queryRaw<any[]>`
+        SELECT cb.id, cb.client_id as "clientId", cb.asset_id as "assetId", cb.balance,
+               c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
+               a.name as "assetName", a.symbol as "assetSymbol"
+        FROM "ClientBalance" cb
+        JOIN "Client" c ON cb.client_id = c.id
+        JOIN "Asset" a ON cb.asset_id = a.id
+        WHERE cb.asset_id = ${findClientsDto.assetId}
+          AND cb.balance < 0
+        ORDER BY cb.balance ASC
+      `;
+
+      // Buscar todos los clientes con balance positivo en el activo especificado
+      const clientsWithPositiveBalance = await this.prisma.$queryRaw<any[]>`
+        SELECT cb.id, cb.client_id as "clientId", cb.asset_id as "assetId", cb.balance,
+               c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
+               a.name as "assetName", a.symbol as "assetSymbol"
+        FROM "ClientBalance" cb
+        JOIN "Client" c ON cb.client_id = c.id
+        JOIN "Asset" a ON cb.asset_id = a.id
+        WHERE cb.asset_id = ${findClientsDto.assetId}
+          AND cb.balance > 0
+        ORDER BY cb.balance DESC
+      `;
+
+      // Obtener información del activo
+      const asset = await this.prisma.asset.findUnique({
+        where: { id: findClientsDto.assetId },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+
+      return {
+        clientsThatWeOwe: clientsWithNegativeBalance.map((balance) => ({
+          clientId: balance.clientId,
+          assetId: balance.assetId,
+          balance: Number(balance.balance),
+          absBalance: Math.abs(Number(balance.balance)), // Valor absoluto para facilitar la UI
+          clientName: balance.clientName,
+          clientEmail: balance.clientEmail,
+          clientPhone: balance.clientPhone,
+          assetName: balance.assetName,
+          assetSymbol: balance.assetSymbol,
+        })),
+        clientsThatOweUs: clientsWithPositiveBalance.map((balance) => ({
+          clientId: balance.clientId,
+          assetId: balance.assetId,
+          balance: Number(balance.balance),
+          clientName: balance.clientName,
+          clientEmail: balance.clientEmail,
+          clientPhone: balance.clientPhone,
+          assetName: balance.assetName,
+          assetSymbol: balance.assetSymbol,
+        })),
+        asset,
+      };
+    } catch (error) {
+      console.error('Error en findClientsForReconciliation:', error);
+      throw new BadRequestException(
+        `Error al buscar clientes para conciliación: ${error.message}`,
       );
     }
   }

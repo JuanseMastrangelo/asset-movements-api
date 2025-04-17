@@ -36,6 +36,8 @@ import { SearchTransactionsDto } from './dto/search-transactions.dto';
 import { TransformResponseInterceptor } from '../common/interceptor/transform.response.interceptor';
 import { CreatePartialTransactionDto } from './dto/create-partial-transaction.dto';
 import { CompletePendingTransactionDto } from './dto/complete-pending-transaction.dto';
+import { CreateReconciliationDto } from './dto/create-reconciliation.dto';
+import { FindClientsForReconciliationDto } from './dto/find-clients-for-reconciliation.dto';
 
 @ApiTags('Transactions')
 @ApiBearerAuth('JWT-auth')
@@ -362,5 +364,57 @@ export class TransactionsController {
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  @Post('reconcile')
+  @Role(UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Conciliar saldos entre clientes',
+    description:
+      'Toma un saldo positivo de un cliente y lo distribuye para saldar deudas con otros clientes que tienen saldo negativo.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Conciliación realizada exitosamente',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Datos inválidos o saldo insuficiente',
+  })
+  reconcile(
+    @Body() createReconciliationDto: CreateReconciliationDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.transactionsService.reconcile(
+      createReconciliationDto,
+      req.user.sub,
+    );
+  }
+
+  @Post('find-clients-for-reconciliation')
+  @Role(
+    UserRole.OPERATOR,
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.ACCOUNTANT,
+    UserRole.VIEWER,
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Buscar clientes disponibles para conciliación',
+    description:
+      'Encuentra clientes con balances positivos (que deben dinero) y negativos (a los que se les debe) para un activo específico.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Lista de clientes con balances disponibles para conciliación',
+  })
+  findClientsForReconciliation(
+    @Body() findClientsDto: FindClientsForReconciliationDto,
+  ) {
+    return this.transactionsService.findClientsForReconciliation(
+      findClientsDto,
+    );
   }
 }
