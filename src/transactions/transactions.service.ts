@@ -19,6 +19,7 @@ import { CreatePartialTransactionDto } from './dto/create-partial-transaction.dt
 import { CompletePendingTransactionDto } from './dto/complete-pending-transaction.dto';
 import { CreateReconciliationDto } from './dto/create-reconciliation.dto';
 import { FindClientsForReconciliationDto } from './dto/find-clients-for-reconciliation.dto';
+import { ConciliateImmutableAssetsDto } from './dto/conciliate-immutable-assets.dto';
 
 // Definir un tipo específico para el retorno
 type TransactionResponse = Transaction & {
@@ -2818,6 +2819,200 @@ export class TransactionsService {
       console.error('Error en findClientsForReconciliation:', error);
       throw new BadRequestException(
         `Error al buscar clientes para conciliación: ${error.message}`,
+      );
+    }
+  }
+
+  async conciliateImmutableAssets(
+    dto: ConciliateImmutableAssetsDto,
+    userId: string,
+  ): Promise<any> {
+    try {
+      return this.prisma.$transaction(
+        async (tx) => {
+          // 1. Calcular el balance neto y los totales de entrada/salida
+          let incomingTotal = 0;
+          let outgoingTotal = 0;
+
+          dto.clientTransactions.forEach((transaction) => {
+            if (transaction.movementType === MovementType.INCOME) {
+              incomingTotal += transaction.amount;
+            } else {
+              outgoingTotal += transaction.amount;
+            }
+          });
+
+          // Registrar los totales pero sin validación, ya que pueden ser diferentes
+          console.log(
+            `Total INCOME: ${incomingTotal}, Total EXPENSE: ${outgoingTotal}`,
+          );
+
+          // 2. Verificar que todos los activos son inmutables
+          const assetIds = [
+            ...new Set(dto.clientTransactions.map((t) => t.assetId)),
+          ];
+
+          const assets = await tx.asset.findMany({
+            where: {
+              id: {
+                in: assetIds,
+              },
+            },
+          });
+
+          // Verificar que existen todos los activos solicitados
+          if (assets.length !== assetIds.length) {
+            const foundIds = assets.map((a) => a.id);
+            const missingIds = assetIds.filter((id) => !foundIds.includes(id));
+            throw new NotFoundException(
+              `No se encontraron los activos con IDs: ${missingIds.join(', ')}`,
+            );
+          }
+
+          // Verificar que todos son inmutables
+          const nonImmutableAssets = assets.filter((a) => !a.isImmutable);
+          if (nonImmutableAssets.length > 0) {
+            throw new BadRequestException(
+              `Los siguientes activos no son inmutables: ${nonImmutableAssets
+                .map((a) => a.name)
+                .join(
+                  ', ',
+                )}. Esta operación solo es válida para activos inmutables.`,
+            );
+          }
+
+          // 4. Verificar que existen todos los clientes
+          const clientIds = [
+            ...new Set(dto.clientTransactions.map((t) => t.clientId)),
+          ];
+
+          const clients = await tx.client.findMany({
+            where: {
+              id: {
+                in: clientIds,
+              },
+            },
+          });
+
+          // Verificar que existen todos los clientes solicitados
+          if (clients.length !== clientIds.length) {
+            const foundIds = clients.map((c) => c.id);
+            const missingIds = clientIds.filter((id) => !foundIds.includes(id));
+            throw new NotFoundException(
+              `No se encontraron los clientes con IDs: ${missingIds.join(', ')}`,
+            );
+          }
+
+          // 5. Crear transacciones para cada cliente
+          const transactions = [];
+
+          for (const clientTransaction of dto.clientTransactions) {
+            const client = clients.find(
+              (c) => c.id === clientTransaction.clientId,
+            );
+            const asset = assets.find(
+              (a) => a.id === clientTransaction.assetId,
+            );
+
+            // Crear la transacción para este cliente
+            const transaction = await tx.transaction.create({
+              data: {
+                clientId: clientTransaction.clientId,
+                date: new Date(),
+                state: TransactionState.COMPLETED, // Marcar como completada automáticamente
+                notes:
+                  clientTransaction.notes ||
+                  `Operación con activo inmutable: ${asset.name}`,
+                createdBy: userId,
+              },
+            });
+
+            // Crear el detalle de la transacción
+            const transactionDetail = await tx.transactionDetail.create({
+              data: {
+                transactionId: transaction.id,
+                assetId: clientTransaction.assetId,
+                movementType: clientTransaction.movementType,
+                amount: clientTransaction.amount,
+                notes: `Pase de mano con ${asset.name}`,
+                createdBy: userId,
+              },
+            });
+
+            transactions.push({
+              transaction,
+              detail: transactionDetail,
+              client,
+              asset,
+            });
+          }
+
+          // 6. Relacionar las transacciones entre sí
+          // Si hay más de una transacción, las relacionamos
+          if (transactions.length > 1) {
+            // Tomamos la primera transacción como "principal" para relacionar las demás
+            const mainTransaction = transactions[0].transaction;
+
+            // Actualizamos las demás transacciones para que tengan como padre la transacción principal
+            for (let i = 1; i < transactions.length; i++) {
+              await tx.transaction.update({
+                where: { id: transactions[i].transaction.id },
+                data: {
+                  parentTransactionId: mainTransaction.id,
+                },
+              });
+            }
+          }
+
+          // 7. Registrar en el log de auditoría
+          await tx.auditLog.create({
+            data: {
+              entityType: 'ImmutableAssetTransaction',
+              entityId: transactions[0].transaction.id, // Usamos el ID de la primera transacción
+              action: 'Pase de mano con activos inmutables',
+              changedData: {
+                incomingTotal,
+                outgoingTotal,
+                clientTransactions: dto.clientTransactions.map((t) => ({
+                  clientId: t.clientId,
+                  assetId: t.assetId,
+                  assetName: assets.find((a) => a.id === t.assetId).name,
+                  movementType: t.movementType,
+                  amount: t.amount,
+                })),
+              },
+              changedBy: userId,
+            },
+          });
+
+          // 8. Retornar resultado
+          return {
+            incomingTotal,
+            outgoingTotal,
+            transactions: transactions.map((t) => ({
+              id: t.transaction.id,
+              client: {
+                id: t.client.id,
+                name: t.client.name,
+              },
+              asset: {
+                id: t.asset.id,
+                name: t.asset.name,
+              },
+              amount: t.detail.amount,
+              movementType: t.detail.movementType,
+            })),
+          };
+        },
+        {
+          timeout: 30000,
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        },
+      );
+    } catch (error) {
+      console.error('Error en conciliateImmutableAssets:', error);
+      throw new BadRequestException(
+        `Error al procesar transacción con activo inmutable: ${error.message}`,
       );
     }
   }

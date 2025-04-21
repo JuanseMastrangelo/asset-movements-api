@@ -54,11 +54,13 @@ async function createAllAssets() {
         name: 'Cable traer',
         description: 'Transferencia del exterior',
         type: AssetType.DIGITAL,
+        isImmutable: true,
       },
       {
         name: 'Cable llevar',
         description: 'Transferencia al exterior',
         type: AssetType.DIGITAL,
+        isImmutable: true,
       },
       {
         name: 'Cheque',

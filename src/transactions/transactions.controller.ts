@@ -38,6 +38,7 @@ import { CreatePartialTransactionDto } from './dto/create-partial-transaction.dt
 import { CompletePendingTransactionDto } from './dto/complete-pending-transaction.dto';
 import { CreateReconciliationDto } from './dto/create-reconciliation.dto';
 import { FindClientsForReconciliationDto } from './dto/find-clients-for-reconciliation.dto';
+import { ConciliateImmutableAssetsDto } from './dto/conciliate-immutable-assets.dto';
 
 @ApiTags('Transactions')
 @ApiBearerAuth('JWT-auth')
@@ -415,6 +416,32 @@ export class TransactionsController {
   ) {
     return this.transactionsService.findClientsForReconciliation(
       findClientsDto,
+    );
+  }
+
+  @Post('conciliate-immutable-assets')
+  @Role(UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Registrar pase de mano con activos inmutables',
+    description:
+      'Registra operaciones con activos inmutables como "Cable traer" y "Cable llevar" entre diversos clientes sin afectar saldos, solo para trazabilidad.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Operación registrada exitosamente',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Datos inválidos o errores en la operación',
+  })
+  conciliateImmutableAssets(
+    @Body() conciliateImmutableAssetsDto: ConciliateImmutableAssetsDto,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.transactionsService.conciliateImmutableAssets(
+      conciliateImmutableAssetsDto,
+      req.user.sub,
     );
   }
 }

@@ -103,6 +103,24 @@ async function initializeDatabase() {
           isActive: true,
         },
       }),
+      prisma.asset.create({
+        data: {
+          name: 'Cable llevar',
+          description: 'Transferencia al exterior',
+          type: AssetType.DIGITAL,
+          isImmutable: true,
+          isActive: true,
+        },
+      }),
+      prisma.asset.create({
+        data: {
+          name: 'Cable traer',
+          description: 'Transferencia del exterior',
+          type: AssetType.DIGITAL,
+          isImmutable: true,
+          isActive: true,
+        },
+      }),
     ]);
 
     console.log('\nActivos creados:');
