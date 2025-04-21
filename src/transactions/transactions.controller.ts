@@ -113,7 +113,7 @@ export class TransactionsController {
       console.error('Error en findAll:', error);
       throw new HttpException(
         'Error al listar transacciones: ' + error.message,
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        (error.status || HttpStatus.INTERNAL_SERVER_ERROR) as number,
       );
     }
   }
@@ -138,7 +138,7 @@ export class TransactionsController {
       console.error('Error en search:', error);
       throw new HttpException(
         'Error al buscar transacciones: ' + error.message,
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        (error.status || HttpStatus.INTERNAL_SERVER_ERROR) as number,
       );
     }
   }
@@ -361,7 +361,7 @@ export class TransactionsController {
       console.error('Error en cancel:', error);
       throw new HttpException(
         'Error al cancelar la transacción: ' + error.message,
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        (error.status || HttpStatus.INTERNAL_SERVER_ERROR) as number,
       );
     }
   }

@@ -179,13 +179,30 @@ export class TransactionsService {
               // Procesar actualizaciones de balance de manera optimizada
               const balanceUpdates = transactionDetails.reduce(
                 (acc, detail) => {
+                  // Para el balance del cliente:
+                  // - Si el cliente ENTREGA (INCOME), debe DISMINUIR su deuda, por lo tanto su balance DISMINUYE (valor negativo)
+                  // - Si el cliente RECIBE (EXPENSE), debe AUMENTAR su deuda, por lo tanto su balance AUMENTA (valor positivo)
                   const amountChange =
                     detail.movementType === MovementType.INCOME
-                      ? -detail.amount // El cliente entrega (INCOME), disminuye su deuda, por lo tanto es negativo
-                      : detail.amount; // El cliente recibe (EXPENSE), aumenta su deuda, por lo tanto es positivo
+                      ? -detail.amount // Cliente entrega, su deuda disminuye (balance disminuye)
+                      : detail.amount; // Cliente recibe, su deuda aumenta (balance aumenta)
 
                   acc[detail.assetId] =
                     (acc[detail.assetId] || 0) + amountChange;
+                  return acc;
+                },
+                {} as Record<string, number>,
+              );
+
+              // Calcular actualizaciones de balance para el sistema (inverso al cliente)
+              const systemBalanceUpdates = Object.entries(
+                balanceUpdates,
+              ).reduce(
+                (acc, [assetId, amount]) => {
+                  // Para el balance del sistema:
+                  // - Si el cliente ENTREGA (INCOME), el sistema RECIBE, por lo tanto el balance del sistema AUMENTA
+                  // - Si el cliente RECIBE (EXPENSE), el sistema ENTREGA, por lo tanto el balance del sistema DISMINUYE
+                  acc[assetId] = -1 * amount; // El sistema tiene el efecto opuesto al cliente
                   return acc;
                 },
                 {} as Record<string, number>,
@@ -212,7 +229,7 @@ export class TransactionsService {
               const systemBalances = await tx.clientBalance.findMany({
                 where: {
                   clientId: systemClient.id,
-                  assetId: { in: Object.keys(balanceUpdates) },
+                  assetId: { in: Object.keys(systemBalanceUpdates) },
                 },
               });
 
@@ -262,7 +279,8 @@ export class TransactionsService {
                     },
                     data: {
                       balance:
-                        existingSystemBalance.balance + balanceUpdates[assetId],
+                        existingSystemBalance.balance +
+                        systemBalanceUpdates[assetId],
                       transactionId: transaction.id,
                     },
                   });
@@ -271,7 +289,7 @@ export class TransactionsService {
                     data: {
                       clientId: systemClient.id,
                       assetId: assetId,
-                      balance: balanceUpdates[assetId],
+                      balance: systemBalanceUpdates[assetId],
                       transactionId: transaction.id,
                     },
                   });
@@ -665,12 +683,27 @@ export class TransactionsService {
           // Procesar actualizaciones de balance
           const balanceUpdates = transactionDetails.reduce(
             (acc, detail) => {
+              // Para el balance del cliente:
+              // - Si el cliente ENTREGA (INCOME), debe DISMINUIR su deuda, por lo tanto su balance DISMINUYE (valor negativo)
+              // - Si el cliente RECIBE (EXPENSE), debe AUMENTAR su deuda, por lo tanto su balance AUMENTA (valor positivo)
               const amountChange =
                 detail.movementType === MovementType.INCOME
-                  ? -detail.amount // El cliente entrega (INCOME), disminuye su deuda, por lo tanto es negativo
-                  : detail.amount; // El cliente recibe (EXPENSE), aumenta su deuda, por lo tanto es positivo
+                  ? -detail.amount // Cliente entrega, su deuda disminuye (balance disminuye)
+                  : detail.amount; // Cliente recibe, su deuda aumenta (balance aumenta)
 
               acc[detail.assetId] = (acc[detail.assetId] || 0) + amountChange;
+              return acc;
+            },
+            {} as Record<string, number>,
+          );
+
+          // Calcular actualizaciones de balance para el sistema (inverso al cliente)
+          const systemBalanceUpdates = Object.entries(balanceUpdates).reduce(
+            (acc, [assetId, amount]) => {
+              // Para el balance del sistema:
+              // - Si el cliente ENTREGA (INCOME), el sistema RECIBE, por lo tanto el balance del sistema AUMENTA
+              // - Si el cliente RECIBE (EXPENSE), el sistema ENTREGA, por lo tanto el balance del sistema DISMINUYE
+              acc[assetId] = -1 * Number(amount); // El sistema tiene el efecto opuesto al cliente
               return acc;
             },
             {} as Record<string, number>,
@@ -697,7 +730,7 @@ export class TransactionsService {
           const systemBalances = await tx.clientBalance.findMany({
             where: {
               clientId: systemClient.id,
-              assetId: { in: Object.keys(balanceUpdates) },
+              assetId: { in: Object.keys(systemBalanceUpdates) },
             },
           });
 
@@ -747,7 +780,8 @@ export class TransactionsService {
                 },
                 data: {
                   balance:
-                    existingSystemBalance.balance + balanceUpdates[assetId],
+                    existingSystemBalance.balance +
+                    systemBalanceUpdates[assetId], // Usar systemBalanceUpdates en lugar de -balanceUpdates
                   transactionId: id,
                 },
               });
@@ -756,7 +790,7 @@ export class TransactionsService {
                 data: {
                   clientId: systemClient.id,
                   assetId: assetId,
-                  balance: balanceUpdates[assetId],
+                  balance: systemBalanceUpdates[assetId], // Usar systemBalanceUpdates en lugar de -balanceUpdates
                   transactionId: id,
                 },
               });
@@ -946,12 +980,27 @@ export class TransactionsService {
           // Procesar actualizaciones de balance
           const balanceUpdates = transactionDetails.reduce(
             (acc, detail) => {
+              // Para el balance del cliente:
+              // - Si el cliente ENTREGA (INCOME), debe DISMINUIR su deuda, por lo tanto su balance DISMINUYE (valor negativo)
+              // - Si el cliente RECIBE (EXPENSE), debe AUMENTAR su deuda, por lo tanto su balance AUMENTA (valor positivo)
               const amountChange =
                 detail.movementType === MovementType.INCOME
-                  ? -detail.amount // El cliente entrega (INCOME), disminuye su deuda, por lo tanto es negativo
-                  : detail.amount; // El cliente recibe (EXPENSE), aumenta su deuda, por lo tanto es positivo
+                  ? -detail.amount // Cliente entrega, su deuda disminuye (balance disminuye)
+                  : detail.amount; // Cliente recibe, su deuda aumenta (balance aumenta)
 
               acc[detail.assetId] = (acc[detail.assetId] || 0) + amountChange;
+              return acc;
+            },
+            {} as Record<string, number>,
+          );
+
+          // Calcular actualizaciones de balance para el sistema (inverso al cliente)
+          const systemBalanceUpdates = Object.entries(balanceUpdates).reduce(
+            (acc, [assetId, amount]) => {
+              // Para el balance del sistema:
+              // - Si el cliente ENTREGA (INCOME), el sistema RECIBE, por lo tanto el balance del sistema AUMENTA
+              // - Si el cliente RECIBE (EXPENSE), el sistema ENTREGA, por lo tanto el balance del sistema DISMINUYE
+              acc[assetId] = -1 * Number(amount); // El sistema tiene el efecto opuesto al cliente
               return acc;
             },
             {} as Record<string, number>,
@@ -978,7 +1027,7 @@ export class TransactionsService {
           const systemBalances = await tx.clientBalance.findMany({
             where: {
               clientId: systemClient.id,
-              assetId: { in: Object.keys(balanceUpdates) },
+              assetId: { in: Object.keys(systemBalanceUpdates) },
             },
           });
 
@@ -1028,7 +1077,8 @@ export class TransactionsService {
                 },
                 data: {
                   balance:
-                    existingSystemBalance.balance + balanceUpdates[assetId],
+                    existingSystemBalance.balance +
+                    systemBalanceUpdates[assetId], // Usar systemBalanceUpdates en lugar de -balanceUpdates
                   transactionId: id,
                 },
               });
@@ -1037,7 +1087,7 @@ export class TransactionsService {
                 data: {
                   clientId: systemClient.id,
                   assetId: assetId,
-                  balance: balanceUpdates[assetId],
+                  balance: systemBalanceUpdates[assetId], // Usar systemBalanceUpdates en lugar de -balanceUpdates
                   transactionId: id,
                 },
               });
@@ -1676,7 +1726,7 @@ export class TransactionsService {
                     },
                   },
                   data: {
-                    balance: systemBalanceValue,
+                    balance: existingSystemBalance.balance + systemBalanceValue, // Actualizamos el balance, no lo reemplazamos
                     transactionId: parentId,
                   },
                 });
@@ -1689,7 +1739,7 @@ export class TransactionsService {
                   data: {
                     clientId: systemClient.id,
                     assetId,
-                    balance: systemBalanceValue,
+                    balance: systemBalanceValue, // Aquí sí se asigna directamente al crear
                     transactionId: parentId,
                   },
                 });
@@ -1928,12 +1978,27 @@ export class TransactionsService {
         // 7. Actualizar balances para la transacción inicial (ya que está COMPLETED)
         const balanceUpdates = initialDetails.reduce(
           (acc, detail) => {
+            // Para el balance del cliente:
+            // - Si el cliente ENTREGA (INCOME), debe DISMINUIR su deuda, por lo tanto su balance DISMINUYE (valor negativo)
+            // - Si el cliente RECIBE (EXPENSE), debe AUMENTAR su deuda, por lo tanto su balance AUMENTA (valor positivo)
             const amountChange =
               detail.movementType === MovementType.INCOME
-                ? detail.amount
-                : -detail.amount;
+                ? -detail.amount // Cliente entrega, su deuda disminuye (balance disminuye)
+                : detail.amount; // Cliente recibe, su deuda aumenta (balance aumenta)
 
             acc[detail.assetId] = (acc[detail.assetId] || 0) + amountChange;
+            return acc;
+          },
+          {} as Record<string, number>,
+        );
+
+        // Calcular actualizaciones de balance para el sistema (inverso al cliente)
+        const systemBalanceUpdates = Object.entries(balanceUpdates).reduce(
+          (acc, [assetId, amount]) => {
+            // Para el balance del sistema:
+            // - Si el cliente ENTREGA (INCOME), el sistema RECIBE, por lo tanto el balance del sistema AUMENTA
+            // - Si el cliente RECIBE (EXPENSE), el sistema ENTREGA, por lo tanto el balance del sistema DISMINUYE
+            acc[assetId] = -1 * Number(amount); // El sistema tiene el efecto opuesto al cliente
             return acc;
           },
           {} as Record<string, number>,
@@ -1960,7 +2025,7 @@ export class TransactionsService {
         const systemBalances = await tx.clientBalance.findMany({
           where: {
             clientId: systemClient.id,
-            assetId: { in: Object.keys(balanceUpdates) },
+            assetId: { in: Object.keys(systemBalanceUpdates) },
           },
         });
 
@@ -1981,7 +2046,7 @@ export class TransactionsService {
               },
               data: {
                 balance:
-                  existingClientBalance.balance - balanceUpdates[assetId],
+                  existingClientBalance.balance + balanceUpdates[assetId],
                 transactionId: initialTransaction.id,
               },
             });
@@ -1990,7 +2055,7 @@ export class TransactionsService {
               data: {
                 clientId: createPartialTransactionDto.clientId,
                 assetId: assetId,
-                balance: -balanceUpdates[assetId],
+                balance: balanceUpdates[assetId],
                 transactionId: initialTransaction.id,
               },
             });
@@ -2010,7 +2075,7 @@ export class TransactionsService {
               },
               data: {
                 balance:
-                  existingSystemBalance.balance + balanceUpdates[assetId],
+                  existingSystemBalance.balance + systemBalanceUpdates[assetId], // Usar systemBalanceUpdates en lugar de -balanceUpdates
                 transactionId: initialTransaction.id,
               },
             });
@@ -2019,7 +2084,7 @@ export class TransactionsService {
               data: {
                 clientId: systemClient.id,
                 assetId: assetId,
-                balance: balanceUpdates[assetId],
+                balance: systemBalanceUpdates[assetId], // Usar systemBalanceUpdates en lugar de -balanceUpdates
                 transactionId: initialTransaction.id,
               },
             });
@@ -2201,12 +2266,27 @@ export class TransactionsService {
         // Procesar actualizaciones de balance
         const balanceUpdates = updatedTransaction.details.reduce(
           (acc, detail) => {
+            // Para el balance del cliente:
+            // - Si el cliente ENTREGA (INCOME), debe DISMINUIR su deuda, por lo tanto su balance DISMINUYE (valor negativo)
+            // - Si el cliente RECIBE (EXPENSE), debe AUMENTAR su deuda, por lo tanto su balance AUMENTA (valor positivo)
             const amountChange =
               detail.movementType === MovementType.INCOME
-                ? detail.amount
-                : -detail.amount;
+                ? -detail.amount // Cliente entrega, su deuda disminuye (balance disminuye)
+                : detail.amount; // Cliente recibe, su deuda aumenta (balance aumenta)
 
             acc[detail.assetId] = (acc[detail.assetId] || 0) + amountChange;
+            return acc;
+          },
+          {} as Record<string, number>,
+        );
+
+        // Calcular actualizaciones de balance para el sistema (inverso al cliente)
+        const systemBalanceUpdates = Object.entries(balanceUpdates).reduce(
+          (acc, [assetId, amount]) => {
+            // Para el balance del sistema:
+            // - Si el cliente ENTREGA (INCOME), el sistema RECIBE, por lo tanto el balance del sistema AUMENTA
+            // - Si el cliente RECIBE (EXPENSE), el sistema ENTREGA, por lo tanto el balance del sistema DISMINUYE
+            acc[assetId] = -1 * Number(amount); // El sistema tiene el efecto opuesto al cliente
             return acc;
           },
           {} as Record<string, number>,
@@ -2233,7 +2313,7 @@ export class TransactionsService {
         const systemBalances = await tx.clientBalance.findMany({
           where: {
             clientId: systemClient.id,
-            assetId: { in: Object.keys(balanceUpdates) },
+            assetId: { in: Object.keys(systemBalanceUpdates) },
           },
         });
 
@@ -2254,7 +2334,7 @@ export class TransactionsService {
               },
               data: {
                 balance:
-                  existingClientBalance.balance - balanceUpdates[assetId],
+                  existingClientBalance.balance + balanceUpdates[assetId],
                 transactionId: id,
               },
             });
@@ -2263,7 +2343,7 @@ export class TransactionsService {
               data: {
                 clientId: transaction.clientId,
                 assetId: assetId,
-                balance: -balanceUpdates[assetId],
+                balance: balanceUpdates[assetId],
                 transactionId: id,
               },
             });
@@ -2283,7 +2363,7 @@ export class TransactionsService {
               },
               data: {
                 balance:
-                  existingSystemBalance.balance + balanceUpdates[assetId],
+                  existingSystemBalance.balance + systemBalanceUpdates[assetId],
                 transactionId: id,
               },
             });
@@ -2292,7 +2372,7 @@ export class TransactionsService {
               data: {
                 clientId: systemClient.id,
                 assetId: assetId,
-                balance: balanceUpdates[assetId],
+                balance: systemBalanceUpdates[assetId],
                 transactionId: id,
               },
             });
@@ -2373,7 +2453,13 @@ export class TransactionsService {
 
   /**
    * Concilia fondos entre clientes, tomando un saldo positivo de un cliente y
-   * distribuyéndolo para saldar deudas con otros clientes
+   * distribuyéndolo para saldar deudas con otros clientes.
+   *
+   * La conciliación NO afecta al balance del sistema, solo redistribuye deudas entre clientes.
+   * - Si el Cliente A debe 100 USD al sistema (balance +100)
+   * - Y el sistema debe 100 USD al Cliente B (balance -100)
+   * - La conciliación transfiere la deuda, dejando ambos clientes con balance 0
+   * - El sistema mantiene su inventario real de activos sin cambios
    */
   async reconcile(
     reconciliationDto: CreateReconciliationDto,
@@ -2551,8 +2637,8 @@ export class TransactionsService {
             },
           });
 
-          // 8. Actualizar el balance del cliente sistema
-          const systemBalance = await tx.clientBalance.findUnique({
+          // Actualizar el balance del sistema para el activo origen
+          const systemSourceBalance = await tx.clientBalance.findUnique({
             where: {
               clientId_assetId: {
                 clientId: systemClient.id,
@@ -2561,7 +2647,8 @@ export class TransactionsService {
             },
           });
 
-          if (systemBalance) {
+          if (systemSourceBalance) {
+            // Restamos del sistema lo que entregamos al cliente
             await tx.clientBalance.update({
               where: {
                 clientId_assetId: {
@@ -2570,10 +2657,52 @@ export class TransactionsService {
                 },
               },
               data: {
-                balance: systemBalance.balance - totalReconciliationAmount,
+                // Restamos la cantidad entregada
+                balance:
+                  systemSourceBalance.balance - totalReconciliationAmount,
                 transactionId: sourceTransaction.id,
               },
             });
+          }
+
+          // Revisamos si alguno de los targets tiene un activo diferente
+          // Si lo tiene, debemos actualizar el balance del sistema para ese activo
+          for (const target of reconciliationDto.targets) {
+            if (target.assetId !== reconciliationDto.sourceAssetId) {
+              const systemTargetBalance = await tx.clientBalance.findUnique({
+                where: {
+                  clientId_assetId: {
+                    clientId: systemClient.id,
+                    assetId: target.assetId,
+                  },
+                },
+              });
+
+              if (systemTargetBalance) {
+                // Buscamos la transacción relacionada con este target
+                const targetTransaction = reconciliations.find(
+                  (r) =>
+                    r.targetClientId === target.clientId &&
+                    r.targetAssetId === target.assetId,
+                );
+
+                await tx.clientBalance.update({
+                  where: {
+                    clientId_assetId: {
+                      clientId: systemClient.id,
+                      assetId: target.assetId,
+                    },
+                  },
+                  data: {
+                    // Sumamos la cantidad recibida
+                    balance: systemTargetBalance.balance + target.amount,
+                    transactionId: targetTransaction
+                      ? targetTransaction.id
+                      : sourceTransaction.id,
+                  },
+                });
+              }
+            }
           }
 
           // 9. Registrar en el log de auditoría
@@ -2628,26 +2757,26 @@ export class TransactionsService {
     try {
       // Buscar todos los clientes con balance negativo en el activo especificado
       const clientsWithNegativeBalance = await this.prisma.$queryRaw<any[]>`
-        SELECT cb.id, cb.client_id as "clientId", cb.asset_id as "assetId", cb.balance,
+        SELECT cb.id, cb."clientId", cb."assetId", cb.balance,
                c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
-               a.name as "assetName", a.symbol as "assetSymbol"
+               a.name as "assetName", a.description as "assetSymbol"
         FROM "ClientBalance" cb
-        JOIN "Client" c ON cb.client_id = c.id
-        JOIN "Asset" a ON cb.asset_id = a.id
-        WHERE cb.asset_id = ${findClientsDto.assetId}
+        JOIN "Client" c ON cb."clientId" = c.id
+        JOIN "Asset" a ON cb."assetId" = a.id
+        WHERE cb."assetId" = ${findClientsDto.assetId}
           AND cb.balance < 0
         ORDER BY cb.balance ASC
       `;
 
       // Buscar todos los clientes con balance positivo en el activo especificado
       const clientsWithPositiveBalance = await this.prisma.$queryRaw<any[]>`
-        SELECT cb.id, cb.client_id as "clientId", cb.asset_id as "assetId", cb.balance,
+        SELECT cb.id, cb."clientId", cb."assetId", cb.balance,
                c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
-               a.name as "assetName", a.symbol as "assetSymbol"
+               a.name as "assetName", a.description as "assetSymbol"
         FROM "ClientBalance" cb
-        JOIN "Client" c ON cb.client_id = c.id
-        JOIN "Asset" a ON cb.asset_id = a.id
-        WHERE cb.asset_id = ${findClientsDto.assetId}
+        JOIN "Client" c ON cb."clientId" = c.id
+        JOIN "Asset" a ON cb."assetId" = a.id
+        WHERE cb."assetId" = ${findClientsDto.assetId}
           AND cb.balance > 0
         ORDER BY cb.balance DESC
       `;

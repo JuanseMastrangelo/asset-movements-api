@@ -65,6 +65,7 @@ model Asset {
   type              AssetType
   isPercentage      Boolean             @default(false)
   isMtherAccount    Boolean             @default(false) // (Opcional) Indica si el activo es "cuenta madre" y, por tanto, maneja comisión por transacción.
+  isImmutable       Boolean             @default(false) // Indica si el activo es inmutable y no puede ser modificado a futuro ni sus reglas
   isActive          Boolean             @default(true)
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt

@@ -3,6 +3,8 @@ import {
   UserRole,
   AssetType,
   MovementType,
+  TransactionState,
+  PaymentResponsibility,
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 
@@ -10,7 +12,26 @@ const prisma = new PrismaClient();
 
 async function initializeDatabase() {
   try {
-    console.log('Iniciando la creación de datos básicos...');
+    console.log('Limpiando la base de datos...');
+
+    // Eliminar todas las entidades en orden para evitar violaciones de clave foránea
+    await prisma.reconciliation.deleteMany({});
+    await prisma.billDetail.deleteMany({});
+    await prisma.transactionDetail.deleteMany({});
+    await prisma.logistics.deleteMany({});
+    await prisma.clientBalance.deleteMany({});
+    await prisma.transaction.deleteMany({});
+    await prisma.denomination.deleteMany({});
+    await prisma.transactionRule.deleteMany({});
+    await prisma.logisticsSettings.deleteMany({});
+    await prisma.asset.deleteMany({});
+    await prisma.client.deleteMany({});
+    await prisma.auditLog.deleteMany({});
+    await prisma.user.deleteMany({});
+
+    console.log(
+      'Base de datos limpia. Iniciando la creación de datos básicos...',
+    );
 
     // 1. Crear usuario administrador
     const hashedPassword = await bcrypt.hash('Admin123!', 10);
@@ -89,7 +110,24 @@ async function initializeDatabase() {
       console.log(`- ${asset.name} (${asset.description}): ${asset.id}`);
     });
 
-    // 4. Crear denominaciones para cada activo físico
+    // 4. Crear configuración de logística
+    const logisticsSettings = await prisma.logisticsSettings.create({
+      data: {
+        name: 'Configuración estándar',
+        basePrice: 50,
+        pricePerKm: 2.5,
+        minDistance: 5,
+        maxDistance: 100,
+        isActive: true,
+      },
+    });
+
+    console.log('\nConfiguración de logística creada:');
+    console.log(
+      `- ${logisticsSettings.name}: Base ${logisticsSettings.basePrice}, ${logisticsSettings.pricePerKm}/km`,
+    );
+
+    // 5. Crear denominaciones para cada activo físico
     const denominations = [];
     for (const asset of assets) {
       if (asset.type === AssetType.PHYSICAL) {
@@ -119,7 +157,7 @@ async function initializeDatabase() {
       console.log(`- ${asset?.description}: ${denomination.value}`);
     });
 
-    // 5. Establecer balances iniciales del sistema
+    // 6. Establecer balances iniciales del sistema
     const balances = await Promise.all(
       assets
         .filter((asset) => !asset.isPercentage)
@@ -146,23 +184,36 @@ async function initializeDatabase() {
       console.log(`- ${asset?.name}: ${balance.balance}`);
     }
 
-    // 6. Crear un cliente de prueba
-    const testClient = await prisma.client.create({
-      data: {
-        name: 'Cliente de Prueba',
-        email: 'test@example.com',
-        phone: '+123456789',
-        address: 'Dirección de prueba',
-        country: 'País de prueba',
-        isActive: true,
-      },
+    // 7. Crear clientes de prueba
+    const testClients = await Promise.all([
+      prisma.client.create({
+        data: {
+          name: 'Cliente de Prueba 1',
+          email: 'test1@example.com',
+          phone: '+123456789',
+          address: 'Dirección de prueba 1',
+          country: 'País de prueba',
+          isActive: true,
+        },
+      }),
+      prisma.client.create({
+        data: {
+          name: 'Cliente de Prueba 2',
+          email: 'test2@example.com',
+          phone: '+987654321',
+          address: 'Dirección de prueba 2',
+          country: 'País de prueba',
+          isActive: true,
+        },
+      }),
+    ]);
+
+    console.log('\nClientes de prueba creados:');
+    testClients.forEach((client) => {
+      console.log(`- ID: ${client.id}, Nombre: ${client.name}`);
     });
 
-    console.log('\nCliente de prueba creado:');
-    console.log('- ID:', testClient.id);
-    console.log('- Nombre:', testClient.name);
-
-    // 7. Crear una transacción de prueba
+    // 8. Crear transacciones de prueba
     const usdAsset = assets.find((a) => a.description === 'USD');
     const eurAsset = assets.find((a) => a.description === 'EUR');
 
@@ -205,23 +256,20 @@ async function initializeDatabase() {
         eur50 &&
         eur10
       ) {
-        // Crear la transacción
-        const transaction = await prisma.transaction.create({
+        // Crear la transacción para el primer cliente
+        const transaction1 = await prisma.transaction.create({
           data: {
-            client: {
-              connect: { id: testClient.id },
-            },
-            createdByUser: {
-              connect: { id: adminUser.id },
-            },
+            clientId: testClients[0].id,
+            createdBy: adminUser.id,
             notes: 'Transacción de prueba con billetes',
+            state: TransactionState.COMPLETED,
           },
         });
 
         // Crear el detalle de transacción para USD (entrada)
         const usdDetail = await prisma.transactionDetail.create({
           data: {
-            transactionId: transaction.id,
+            transactionId: transaction1.id,
             assetId: usdAsset.id,
             movementType: MovementType.INCOME,
             amount: 285,
@@ -271,7 +319,7 @@ async function initializeDatabase() {
         // Crear el detalle de transacción para EUR (salida)
         const eurDetail = await prisma.transactionDetail.create({
           data: {
-            transactionId: transaction.id,
+            transactionId: transaction1.id,
             assetId: eurAsset.id,
             movementType: MovementType.EXPENSE,
             amount: 260,
@@ -304,20 +352,110 @@ async function initializeDatabase() {
           }),
         ]);
 
-        console.log('\nTransacción de prueba creada:');
-        console.log('- ID:', transaction.id);
-        console.log('- Cliente:', testClient.name);
-        console.log('- Monto USD:', 285);
-        console.log('- Monto EUR:', 260);
+        // Actualizar balance del cliente 1
+        await prisma.clientBalance.create({
+          data: {
+            clientId: testClients[0].id,
+            assetId: usdAsset.id,
+            balance: 285, // Positivo porque el cliente entregó dólares
+            transactionId: transaction1.id,
+          },
+        });
 
-        // Nota para futuras mejoras: Implementar transacciones parciales
-        // Requiere añadir al esquema Prisma:
-        // - isPartial, partialAmount, partialType en TransactionDetail
-        // - status, parentTransactionId en Transaction
-        // Ver el ejemplo comentado en el código fuente
+        await prisma.clientBalance.create({
+          data: {
+            clientId: testClients[0].id,
+            assetId: eurAsset.id,
+            balance: -260, // Negativo porque el cliente recibió euros
+            transactionId: transaction1.id,
+          },
+        });
+
+        // Crear transacción pendiente para el segundo cliente
+        const transaction2 = await prisma.transaction.create({
+          data: {
+            clientId: testClients[1].id,
+            createdBy: adminUser.id,
+            notes: 'Transacción pendiente para conciliación',
+            state: TransactionState.PENDING,
+          },
+        });
+
+        // Crear detalles para la segunda transacción
+        await prisma.transactionDetail.create({
+          data: {
+            transactionId: transaction2.id,
+            assetId: eurAsset.id,
+            movementType: MovementType.INCOME,
+            amount: 150,
+            createdBy: adminUser.id,
+          },
+        });
+
+        await prisma.transactionDetail.create({
+          data: {
+            transactionId: transaction2.id,
+            assetId: usdAsset.id,
+            movementType: MovementType.EXPENSE,
+            amount: 170,
+            createdBy: adminUser.id,
+          },
+        });
+
+        // Crear datos de logística para la segunda transacción
+        await prisma.logistics.create({
+          data: {
+            transactionId: transaction2.id,
+            originAddress: 'Sucursal Principal',
+            destinationAddress: 'Dirección del Cliente 2',
+            distance: 15.5,
+            price: 88.75, // basePrice + (pricePerKm * distance)
+            pricePerKm: logisticsSettings.pricePerKm,
+            deliveryDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // mañana
+            paymentResponsibility: PaymentResponsibility.SHARED,
+            status: 'PENDING',
+          },
+        });
+
+        // 9. Crear una regla de transacción entre USD y EUR
+        await prisma.transactionRule.create({
+          data: {
+            sourceAssetId: usdAsset.id,
+            targetAssetId: eurAsset.id,
+            isEnabled: true,
+          },
+        });
+
+        // Crear un registro de auditoría
+        await prisma.auditLog.create({
+          data: {
+            entityType: 'Transaction',
+            entityId: transaction1.id,
+            action: 'CREATE',
+            changedData: {
+              message:
+                'Transacción creada durante inicialización de la base de datos',
+            },
+            changedBy: adminUser.id,
+          },
+        });
+
+        console.log('\nTransacciones de prueba creadas:');
+        console.log('- ID Transacción 1:', transaction1.id);
+        console.log('- Cliente:', testClients[0].name);
+        console.log('- Monto USD (entregado):', 285);
+        console.log('- Monto EUR (recibido):', 260);
+        console.log('- Estado: COMPLETED');
+
+        console.log('\n- ID Transacción 2:', transaction2.id);
+        console.log('- Cliente:', testClients[1].name);
+        console.log('- Monto EUR (a entregar):', 150);
+        console.log('- Monto USD (a recibir):', 170);
+        console.log('- Estado: PENDING');
+        console.log('- Con datos de logística');
       } else {
         console.log(
-          '\n⚠️ No se encontraron todas las denominaciones necesarias para crear la transacción de prueba',
+          '\n⚠️ No se encontraron todas las denominaciones necesarias para crear las transacciones de prueba',
         );
       }
     }

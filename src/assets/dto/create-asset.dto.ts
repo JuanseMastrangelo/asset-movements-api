@@ -38,4 +38,10 @@ export class CreateAssetDto {
   @IsOptional()
   @IsBoolean({ message: 'La cuenta madre debe ser un valor booleano' })
   isMtherAccount: boolean;
+
+  @IsOptional()
+  @IsBoolean({
+    message: 'El valor de inmutabilidad debe ser un valor booleano',
+  })
+  isImmutable: boolean;
 }
