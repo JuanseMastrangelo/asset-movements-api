@@ -54,9 +54,6 @@ export class TransactionRulesService {
   async create(createTransactionRuleDto: CreateTransactionRuleDto) {
     const { sourceAssetId, targetAssetId } = createTransactionRuleDto;
 
-    // Verificar si alguno de los activos es inmutable
-    await this.checkAssetsImmutability(sourceAssetId, targetAssetId);
-
     // Verificar que ambos activos existen
     const [sourceAsset, targetAsset] = await Promise.all([
       this.prisma.asset.findUnique({ where: { id: sourceAssetId } }),
