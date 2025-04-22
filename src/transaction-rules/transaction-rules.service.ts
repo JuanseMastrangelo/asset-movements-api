@@ -151,32 +151,6 @@ export class TransactionRulesService {
       );
     }
 
-    // Si se está cambiando alguno de los activos, verificar inmutabilidad
-    if (
-      updateTransactionRuleDto.sourceAssetId ||
-      updateTransactionRuleDto.targetAssetId
-    ) {
-      const sourceAssetId =
-        updateTransactionRuleDto.sourceAssetId || rule.sourceAssetId;
-      const targetAssetId =
-        updateTransactionRuleDto.targetAssetId || rule.targetAssetId;
-
-      // Verificar inmutabilidad de los activos actuales
-      await this.checkAssetsImmutability(
-        rule.sourceAssetId,
-        rule.targetAssetId,
-      );
-
-      // Verificar inmutabilidad de los nuevos activos
-      await this.checkAssetsImmutability(sourceAssetId, targetAssetId);
-    } else {
-      // Verificar inmutabilidad de los activos actuales
-      await this.checkAssetsImmutability(
-        rule.sourceAssetId,
-        rule.targetAssetId,
-      );
-    }
-
     return await this.prisma.transactionRule.update({
       where: { id },
       data: updateTransactionRuleDto,
@@ -201,9 +175,6 @@ export class TransactionRulesService {
         `La regla de transacción con ID ${id} no existe`,
       );
     }
-
-    // Verificar inmutabilidad de los activos
-    await this.checkAssetsImmutability(rule.sourceAssetId, rule.targetAssetId);
 
     return await this.prisma.transactionRule.delete({
       where: { id },
@@ -242,9 +213,6 @@ export class TransactionRulesService {
       );
     }
 
-    // Verificar inmutabilidad de los activos
-    await this.checkAssetsImmutability(rule.sourceAssetId, rule.targetAssetId);
-
     return await this.prisma.transactionRule.update({
       where: { id },
       data: { isEnabled: true },
@@ -269,9 +237,6 @@ export class TransactionRulesService {
         `La regla de transacción con ID ${id} no existe`,
       );
     }
-
-    // Verificar inmutabilidad de los activos
-    await this.checkAssetsImmutability(rule.sourceAssetId, rule.targetAssetId);
 
     return await this.prisma.transactionRule.update({
       where: { id },
