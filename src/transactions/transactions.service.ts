@@ -3043,7 +3043,9 @@ export class TransactionsService {
       // Buscar todas las transacciones abiertas relacionadas con estos activos
       const transactions = await this.prisma.transaction.findMany({
         where: {
-          state: TransactionState.COMPLETED,
+          state: {
+            in: [TransactionState.CURRENT_ACCOUNT, TransactionState.PENDING],
+          },
           details: {
             some: {
               assetId: {
