@@ -3016,4 +3016,85 @@ export class TransactionsService {
       );
     }
   }
+
+  async findOpenImmutableAssetTransactions(): Promise<any> {
+    try {
+      // Buscar los activos inmutables (cable traer, cable llevar) y cuentas madres
+      const immutableAssets = await this.prisma.asset.findMany({
+        where: {
+          OR: [
+            { isImmutable: true },
+            { name: { contains: 'madre', mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          id: true,
+          name: true,
+          isImmutable: true,
+        },
+      });
+
+      if (!immutableAssets.length) {
+        return { transactions: [] };
+      }
+
+      const immutableAssetIds = immutableAssets.map((asset) => asset.id);
+
+      // Buscar todas las transacciones abiertas relacionadas con estos activos
+      const transactions = await this.prisma.transaction.findMany({
+        where: {
+          state: TransactionState.COMPLETED,
+          details: {
+            some: {
+              assetId: {
+                in: immutableAssetIds,
+              },
+            },
+          },
+        },
+        include: {
+          client: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          details: {
+            include: {
+              asset: {
+                select: {
+                  id: true,
+                  name: true,
+                  isImmutable: true,
+                },
+              },
+              billDetails: true,
+            },
+          },
+          createdByUser: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+        orderBy: {
+          date: 'desc',
+        },
+      });
+
+      return {
+        transactions: transactions.map((tx) => ({
+          ...tx,
+          date: tx.date.toISOString(),
+        })),
+        immutableAssets,
+      };
+    } catch (error) {
+      console.error('Error en findOpenImmutableAssetTransactions:', error);
+      throw new BadRequestException(
+        `Error al obtener transacciones de activos inmutables: ${error.message}`,
+      );
+    }
+  }
 }

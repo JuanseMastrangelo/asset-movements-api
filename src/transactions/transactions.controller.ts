@@ -119,6 +119,38 @@ export class TransactionsController {
     }
   }
 
+  @Get('immutable-assets-open')
+  @Role(
+    UserRole.OPERATOR,
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.ACCOUNTANT,
+    UserRole.VIEWER,
+  )
+  @ApiOperation({
+    summary:
+      'Obtener todas las transacciones abiertas de cable traer, cable llevar y cuentas madres',
+    description:
+      'Devuelve todas las transacciones abiertas relacionadas con activos inmutables y cuentas madres sin paginación',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Lista de transacciones abiertas de activos inmutables y cuentas madres',
+  })
+  findOpenImmutableAssetTransactions() {
+    try {
+      return this.transactionsService.findOpenImmutableAssetTransactions();
+    } catch (error) {
+      console.error('Error en findOpenImmutableAssetTransactions:', error);
+      throw new HttpException(
+        'Error al obtener transacciones de activos inmutables: ' +
+          error.message,
+        (error.status || HttpStatus.INTERNAL_SERVER_ERROR) as number,
+      );
+    }
+  }
+
   @Get('search')
   @Role(
     UserRole.OPERATOR,
