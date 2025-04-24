@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssetType, TransactionState } from '@prisma/client';
-import { envs } from '../config/envs.config';
 
 @Injectable()
 export class DashboardService {
@@ -29,14 +28,25 @@ export class DashboardService {
       },
     });
 
-    // 2. Obtener los balances del sistema para estos activos
-    const systemBalances = await this.prisma.clientBalance.findMany({
+    // 2. Buscar el cliente del sistema por su email
+    const systemClient = await this.prisma.client.findFirst({
       where: {
-        clientId: envs.systemClientId,
+        email: 'sistema@casacambio.com',
       },
     });
 
-    // 3. Mapear los activos con sus cantidades
+    if (!systemClient) {
+      throw new NotFoundException('Cliente sistema no encontrado');
+    }
+
+    // 3. Obtener los balances del sistema para estos activos
+    const systemBalances = await this.prisma.clientBalance.findMany({
+      where: {
+        clientId: systemClient.id,
+      },
+    });
+
+    // 4. Mapear los activos con sus cantidades
     return assets.map((asset) => {
       const balance = systemBalances.find(
         (balance) => balance.assetId === asset.id,
@@ -73,7 +83,18 @@ export class DashboardService {
       },
     });
 
-    // 2. Calcular el total de balances por activo
+    // 2. Buscar el cliente del sistema por su email
+    const systemClient = await this.prisma.client.findFirst({
+      where: {
+        email: 'sistema@casacambio.com',
+      },
+    });
+
+    if (!systemClient) {
+      throw new NotFoundException('Cliente sistema no encontrado');
+    }
+
+    // 3. Calcular el total de balances por activo
     const result: Array<{
       id: string;
       name: string;
@@ -90,7 +111,7 @@ export class DashboardService {
         where: {
           assetId: asset.id,
           clientId: {
-            not: envs.systemClientId, // Excluir al cliente del sistema
+            not: systemClient.id, // Excluir al cliente del sistema
           },
         },
       });
@@ -224,9 +245,18 @@ export class DashboardService {
    * @returns Lista de clientes con sus balances por activo
    */
   async getClientCurrentAccounts() {
-    // Configuración del cliente del sistema (para excluirlo)
+    // 1. Buscar el cliente del sistema por su email
+    const systemClient = await this.prisma.client.findFirst({
+      where: {
+        email: 'sistema@casacambio.com',
+      },
+    });
 
-    // 1. Obtener todos los activos activos para usarlos como columnas
+    if (!systemClient) {
+      throw new NotFoundException('Cliente sistema no encontrado');
+    }
+
+    // 2. Obtener todos los activos activos para usarlos como columnas
     const assets = await this.prisma.asset.findMany({
       where: {
         isActive: true,
@@ -238,12 +268,12 @@ export class DashboardService {
       },
     });
 
-    // 2. Obtener todos los clientes activos con sus balances
+    // 3. Obtener todos los clientes activos con sus balances
     const clients = await this.prisma.client.findMany({
       where: {
         isActive: true,
         id: {
-          not: envs.systemClientId, // Excluir al cliente del sistema
+          not: systemClient.id, // Excluir al cliente del sistema
         },
       },
       include: {
@@ -254,7 +284,7 @@ export class DashboardService {
       },
     });
 
-    // 3. Formatear la respuesta
+    // 4. Formatear la respuesta
     const formattedClients = clients.map((client) => {
       const balances: Record<string, number> = {};
 
