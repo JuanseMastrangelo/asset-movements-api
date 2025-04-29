@@ -2870,16 +2870,16 @@ export class TransactionsService {
           }
 
           // Verificar que todos son inmutables
-          const nonImmutableAssets = assets.filter((a) => !a.isImmutable);
-          if (nonImmutableAssets.length > 0) {
-            throw new BadRequestException(
-              `Los siguientes activos no son inmutables: ${nonImmutableAssets
-                .map((a) => a.name)
-                .join(
-                  ', ',
-                )}. Esta operación solo es válida para activos inmutables.`,
-            );
-          }
+          // const nonImmutableAssets = assets.filter((a) => !a.isImmutable);
+          // if (nonImmutableAssets.length > 0) {
+          //   throw new BadRequestException(
+          //     `Los siguientes activos no son inmutables: ${nonImmutableAssets
+          //       .map((a) => a.name)
+          //       .join(
+          //         ', ',
+          //       )}. Esta operación solo es válida para activos inmutables.`,
+          //   );
+          // }
 
           // 4. Verificar que existen todos los clientes
           const clientIds = [
